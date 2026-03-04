@@ -1,0 +1,118 @@
+use anchor_lang::prelude::*;
+use anchor_lang::system_program;
+
+use crate::constants::*;
+use crate::errors::QuestError;
+use crate::state::*;
+
+pub fn handler_create_question(
+    ctx: Context<CreateQuestion>,
+    question: String,
+    answer_hash: [u8; 32],
+    deadline: i64,
+    reward_amount: u64,
+    difficulty: u32,
+) -> Result<()> {
+    require!(question.len() <= MAX_QUESTION_LEN, QuestError::QuestionTooLong);
+    require!(reward_amount > 0, QuestError::InsufficientReward);
+
+    let clock = Clock::get()?;
+    require!(deadline > clock.unix_timestamp, QuestError::InvalidDeadline);
+
+    require!(
+        ctx.accounts.authority.key() == ctx.accounts.game_config.authority,
+        QuestError::Unauthorized
+    );
+
+    // Assign question ID and increment counter
+    let game_config = &mut ctx.accounts.game_config;
+    let question_id = game_config.next_question_id;
+    game_config.next_question_id += 1;
+
+    // Read vault leftover from previous round (exclude rent-exempt minimum)
+    let vault_info = ctx.accounts.vault.to_account_info();
+    let rent = Rent::get()?;
+    let vault_rent = rent.minimum_balance(vault_info.data_len());
+    let vault_leftover = vault_info.lamports().saturating_sub(vault_rent);
+
+    // Transfer reward SOL from authority to vault PDA (system-owned)
+    system_program::transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.authority.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        ),
+        reward_amount,
+    )?;
+
+    // Total reward = new deposit + leftover from previous round
+    let total_reward = reward_amount + vault_leftover;
+
+    // Calculate reward_count: max(previous_winner_count, MIN_REWARD_COUNT)
+    let pool = &mut ctx.accounts.pool;
+    let prev_winner_count = pool.winner_count;
+    let reward_count = if prev_winner_count >= MIN_REWARD_COUNT {
+        prev_winner_count
+    } else {
+        MIN_REWARD_COUNT
+    };
+
+    let reward_per_winner = total_reward / reward_count as u64;
+
+    // Update pool state
+    pool.round += 1;
+    pool.question_id = question_id;
+    pool.question = question;
+    pool.answer_hash = answer_hash;
+    pool.deadline = deadline;
+    pool.reward_amount = total_reward;
+    pool.reward_count = reward_count;
+    pool.reward_per_winner = reward_per_winner;
+    pool.winner_count = 0;
+    pool.is_active = true;
+    pool.difficulty = difficulty;
+
+    msg!(
+        "Question {} created (round {}, reward_count={}, reward_per_winner={})",
+        question_id,
+        pool.round,
+        reward_count,
+        reward_per_winner,
+    );
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct CreateQuestion<'info> {
+    #[account(
+        mut,
+        seeds = [QUEST_CONFIG_SEED],
+        bump,
+    )]
+    pub game_config: Account<'info, GameConfig>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED],
+        bump,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    /// CHECK: Vault PDA holding reward SOL (system-owned, created on first transfer)
+    #[account(
+        mut,
+        seeds = [VAULT_SEED],
+        bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        constraint = authority.key() == game_config.authority @ QuestError::Unauthorized,
+    )]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
