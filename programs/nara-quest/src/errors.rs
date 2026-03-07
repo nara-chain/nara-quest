@@ -5,8 +5,8 @@ pub enum QuestError {
     #[msg("Only the authority can perform this action")]
     Unauthorized,
 
-    #[msg("Pool has no active question")]
-    PoolNotActive,
+    #[msg("No active quest")]
+    NoActiveQuest,
 
     #[msg("The deadline for this question has passed")]
     DeadlineExpired,
@@ -19,9 +19,6 @@ pub enum QuestError {
 
     #[msg("Reward amount must be greater than zero")]
     InsufficientReward,
-
-    #[msg("Pool balance insufficient for reward transfer")]
-    InsufficientPoolBalance,
 
     #[msg("Question exceeds maximum length")]
     QuestionTooLong,

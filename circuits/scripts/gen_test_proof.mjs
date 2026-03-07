@@ -37,15 +37,18 @@ async function main() {
   const lo = BigInt("0x" + pubkeyBuf.subarray(16, 32).toString("hex")).toString();
   const hi = BigInt("0x" + pubkeyBuf.subarray(0, 16).toString("hex")).toString();
 
+  const round = "0"; // test round
+
   console.log("// answer:", answer);
   console.log("// answer_hash:", answerHashStr);
   console.log("// pubkey:", pubkeyHex);
   console.log("// pubkey_lo:", lo);
   console.log("// pubkey_hi:", hi);
+  console.log("// round:", round);
   console.log();
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    { answer, answer_hash: answerHashStr, pubkey_lo: lo, pubkey_hi: hi },
+    { answer, answer_hash: answerHashStr, pubkey_lo: lo, pubkey_hi: hi, round: round },
     WASM_PATH,
     ZKEY_PATH
   );
@@ -77,12 +80,16 @@ async function main() {
   const pubkeyHiBytes = Buffer.alloc(32);
   pubkeyBuf.copy(pubkeyHiBytes, 16, 0, 16);
 
+  // round as 32-byte BE
+  const roundBytes = toBigEndian32(round);
+
   console.log(formatRustArray(proofA, "PROOF_A", 64));
   console.log(formatRustArray(proofB, "PROOF_B", 128));
   console.log(formatRustArray(proofC, "PROOF_C", 64));
   console.log(formatRustArray(answerHashBytes, "ANSWER_HASH", 32));
   console.log(formatRustArray(pubkeyLoBytes, "PUBKEY_LO", 32));
   console.log(formatRustArray(pubkeyHiBytes, "PUBKEY_HI", 32));
+  console.log(formatRustArray(roundBytes, "ROUND", 32));
 
   process.exit(0);
 }

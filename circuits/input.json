@@ -2,5 +2,6 @@
   "answer": "42",
   "answer_hash": "0",
   "pubkey_lo": "0",
-  "pubkey_hi": "0"
+  "pubkey_hi": "0",
+  "round": "0"
 }

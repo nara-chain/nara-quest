@@ -9,6 +9,29 @@ import {
 } from "@solana/web3.js";
 import * as path from "path";
 
+// -- Type definitions for untyped dependencies --
+
+interface Groth16Proof {
+  pi_a: string[];
+  pi_b: string[][];
+  pi_c: string[];
+}
+
+interface SnarkJS {
+  groth16: {
+    fullProve(
+      input: Record<string, string>,
+      wasmFile: string,
+      zkeyFile: string
+    ): Promise<{ proof: Groth16Proof; publicSignals: string[] }>;
+  };
+}
+
+interface PoseidonHasher {
+  (inputs: bigint[]): Uint8Array;
+  F: { toString(val: Uint8Array): string };
+}
+
 // BN254 base field modulus (for G1 point negation)
 const BN254_FIELD_MODULUS = BigInt(
   "21888242871839275222246405745257275088696311157297823662689037894645226208583"
@@ -34,12 +57,12 @@ function toBigEndian32(decStr: string): Buffer {
 function negateG1Y(yDecStr: string): Buffer {
   const y = BigInt(yDecStr);
   const negY = BN254_FIELD_MODULUS - y;
-  let hex = negY.toString(16).padStart(64, "0");
+  const hex = negY.toString(16).padStart(64, "0");
   return Buffer.from(hex, "hex");
 }
 
 // Convert snarkjs proof to Solana format
-function proofToSolana(proof: any): {
+function proofToSolana(proof: Groth16Proof): {
   proofA: number[];
   proofB: number[];
   proofC: number[];
@@ -85,10 +108,11 @@ function hashToOnChain(hashStr: string): number[] {
 
 // Generate ZK proof for a given answer and user pubkey
 async function generateProof(
-  snarkjs: any,
+  snarkjs: SnarkJS,
   answer: string,
   answerHashStr: string,
-  userPubkey: PublicKey
+  userPubkey: PublicKey,
+  round: string
 ): Promise<{ proofA: number[]; proofB: number[]; proofC: number[] }> {
   const { lo, hi } = pubkeyToCircuitInputs(userPubkey);
   const { proof } = await snarkjs.groth16.fullProve(
@@ -97,6 +121,7 @@ async function generateProof(
       answer_hash: answerHashStr,
       pubkey_lo: lo,
       pubkey_hi: hi,
+      round: round,
     },
     CIRCUIT_WASM,
     ZKEY_PATH
@@ -126,7 +151,6 @@ describe("nara-quest", () => {
   // PDAs
   let gameConfigPda: PublicKey;
   let poolPda: PublicKey;
-  let vaultPda: PublicKey;
 
   // sponsor: pays gas and rent for submit on behalf of users
   const sponsor = Keypair.generate();
@@ -136,8 +160,8 @@ describe("nara-quest", () => {
   const user2 = Keypair.generate();
 
   // ZK dependencies (loaded dynamically)
-  let snarkjs: any;
-  let poseidon: any;
+  let snarkjs: SnarkJS;
+  let poseidon: PoseidonHasher;
 
   // Test answer
   const TEST_ANSWER = "42";
@@ -155,10 +179,9 @@ describe("nara-quest", () => {
   const TEST_MODEL = "claude-sonnet-4-6";
 
   before(async () => {
-    snarkjs = await import("snarkjs");
+    snarkjs = await import("snarkjs") as unknown as SnarkJS;
     const circomlibjs = await import("circomlibjs");
-    const poseidonBuilder = await circomlibjs.buildPoseidon();
-    poseidon = poseidonBuilder;
+    poseidon = await circomlibjs.buildPoseidon() as PoseidonHasher;
 
     const hashRaw = poseidon([BigInt(TEST_ANSWER)]);
     answerHashStr = poseidon.F.toString(hashRaw);
@@ -170,10 +193,6 @@ describe("nara-quest", () => {
     );
     [poolPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("quest_pool")],
-      program.programId
-    );
-    [vaultPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("quest_vault")],
       program.programId
     );
 
@@ -198,20 +217,14 @@ describe("nara-quest", () => {
     it("initializes game config and pool", async () => {
       await program.methods
         .initialize()
-        .accounts({
-          pool: poolPda,
-        } as any)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
       expect(gameConfig.authority.toBase58()).to.equal(
         authority.publicKey.toBase58()
       );
-      expect(gameConfig.nextQuestionId.toNumber()).to.equal(1);
-
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.round.toNumber()).to.equal(0);
-      expect(pool.isActive).to.equal(false);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(0);
     });
@@ -220,9 +233,6 @@ describe("nara-quest", () => {
       try {
         await program.methods
           .initialize()
-          .accounts({
-            pool: poolPda,
-          } as any)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -241,22 +251,15 @@ describe("nara-quest", () => {
       await program.methods
         .createQuestion(
           "What is the answer to life?",
-          answerHashOnChain as any,
+          answerHashOnChain,
           deadline,
           rewardAmount,
           DEFAULT_DIFFICULTY
         )
-        .accounts({
-          pool: poolPda,
-          vault: vaultPda,
-          authority: authority.publicKey,
-        } as any)
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      expect(pool.isActive).to.equal(true);
       expect(pool.round.toNumber()).to.equal(1);
-      expect(pool.questionId.toNumber()).to.equal(1);
       expect(pool.question).to.equal("What is the answer to life?");
       expect(pool.difficulty).to.equal(DEFAULT_DIFFICULTY);
       expect(pool.winnerCount).to.equal(0);
@@ -265,9 +268,6 @@ describe("nara-quest", () => {
       expect(pool.rewardPerWinner.toNumber()).to.equal(
         Math.floor(1 * LAMPORTS_PER_SOL / 10)
       );
-
-      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
-      expect(gameConfig.nextQuestionId.toNumber()).to.equal(2);
     });
 
     it("fails if non-authority tries to create question", async () => {
@@ -278,15 +278,14 @@ describe("nara-quest", () => {
         await program.methods
           .createQuestion(
             "Unauthorized question",
-            answerHashOnChain as any,
+            answerHashOnChain,
             deadline,
             rewardAmount,
             DEFAULT_DIFFICULTY
           )
-          .accounts({
-            pool: poolPda,
+          .accountsPartial({
             authority: user1.publicKey,
-          } as any)
+          })
           .signers([user1])
           .rpc();
         expect.fail("should have thrown");
@@ -303,19 +302,15 @@ describe("nara-quest", () => {
         await program.methods
           .createQuestion(
             "Past deadline question",
-            answerHashOnChain as any,
+            answerHashOnChain,
             pastDeadline,
             rewardAmount,
             DEFAULT_DIFFICULTY
           )
-          .accounts({
-            pool: poolPda,
-            authority: authority.publicKey,
-          } as any)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(err.toString()).to.include("InvalidDeadline");
+        expect(String(err)).to.include("InvalidDeadline");
       }
     });
 
@@ -326,33 +321,29 @@ describe("nara-quest", () => {
         await program.methods
           .createQuestion(
             "Zero reward question",
-            answerHashOnChain as any,
+            answerHashOnChain,
             deadline,
             new anchor.BN(0),
             DEFAULT_DIFFICULTY
           )
-          .accounts({
-            pool: poolPda,
-            authority: authority.publicKey,
-          } as any)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(err.toString()).to.include("InsufficientReward");
+        expect(String(err)).to.include("InsufficientReward");
       }
     });
   });
 
   describe("submit_answer (instant reward)", () => {
     it("sponsor submits valid ZK proof on behalf of user1 and user1 receives instant reward", async () => {
+      const pool = await program.account.pool.fetch(poolPda);
       const { proofA, proofB, proofC } = await generateProof(
         snarkjs,
         TEST_ANSWER,
         answerHashStr,
-        user1.publicKey
+        user1.publicKey,
+        pool.round.toString()
       );
-
-      const pool = await program.account.pool.fetch(poolPda);
       const recordPda = winnerRecordPda(program.programId, user1.publicKey);
       const expectedReward = pool.rewardPerWinner.toNumber();
 
@@ -360,14 +351,11 @@ describe("nara-quest", () => {
 
       try {
         await program.methods
-          .submitAnswer(proofA as any, proofB as any, proofC as any, TEST_AGENT, TEST_MODEL)
-          .accounts({
-            pool: poolPda,
-            vault: vaultPda,
-            winnerRecord: recordPda,
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
             user: user1.publicKey,
             payer: sponsor.publicKey,
-          } as any)
+          })
           .signers([sponsor])
           .rpc();
 
@@ -376,7 +364,6 @@ describe("nara-quest", () => {
 
         const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
         expect(winnerRecord.round.toNumber()).to.equal(pool.round.toNumber());
-        expect(winnerRecord.rewarded).to.equal(true);
 
         const user1BalanceAfter = await provider.connection.getBalance(user1.publicKey);
         const balanceDiff = user1BalanceAfter - user1BalanceBefore;
@@ -385,44 +372,38 @@ describe("nara-quest", () => {
         console.log(
           `    User1 received ${expectedReward / LAMPORTS_PER_SOL} SOL instant reward (1/${pool.rewardCount} of total)`
         );
-      } catch (err: any) {
-        if (err.logs) {
+      } catch (err: unknown) {
+        if (err && typeof err === "object" && "logs" in err) {
+          const logs = (err as { logs: string[] }).logs;
           console.log("    Transaction logs:");
-          err.logs.forEach((log: string) => console.log("      " + log));
+          logs.forEach((log: string) => console.log("      " + log));
         }
         throw err;
       }
     });
 
     it("sponsor submits valid ZK proof on behalf of user2 (user2 had zero SOL, gets instant reward)", async () => {
+      const pool = await program.account.pool.fetch(poolPda);
       const { proofA, proofB, proofC } = await generateProof(
         snarkjs,
         TEST_ANSWER,
         answerHashStr,
-        user2.publicKey
+        user2.publicKey,
+        pool.round.toString()
       );
-
-      const pool = await program.account.pool.fetch(poolPda);
-      const recordPda = winnerRecordPda(program.programId, user2.publicKey);
       const expectedReward = pool.rewardPerWinner.toNumber();
 
       await program.methods
-        .submitAnswer(proofA as any, proofB as any, proofC as any, TEST_AGENT, TEST_MODEL)
-        .accounts({
-          pool: poolPda,
-          vault: vaultPda,
-          winnerRecord: recordPda,
+        .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+        .accountsPartial({
           user: user2.publicKey,
           payer: sponsor.publicKey,
-        } as any)
+        })
         .signers([sponsor])
         .rpc();
 
       const poolAfter = await program.account.pool.fetch(poolPda);
       expect(poolAfter.winnerCount).to.equal(2);
-
-      const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
-      expect(winnerRecord.rewarded).to.equal(true);
 
       const user2Balance = await provider.connection.getBalance(user2.publicKey);
       expect(user2Balance).to.equal(expectedReward);
@@ -430,44 +411,43 @@ describe("nara-quest", () => {
 
     it("rejects invalid proof (wrong answer)", async () => {
       const wrongAnswer = "99";
+      const pool = await program.account.pool.fetch(poolPda);
       try {
         await generateProof(
           snarkjs,
           wrongAnswer,
           answerHashStr,
-          user1.publicKey
+          user1.publicKey,
+          pool.round.toString()
         );
         expect.fail("should have thrown during proof generation");
       } catch (err) {
-        expect(err.toString()).to.include("Assert Failed");
+        expect(String(err)).to.include("Assert Failed");
       }
     });
 
     it("rejects proof replay (same user cannot submit twice in same round)", async () => {
+      const pool = await program.account.pool.fetch(poolPda);
       const { proofA, proofB, proofC } = await generateProof(
         snarkjs,
         TEST_ANSWER,
         answerHashStr,
-        user1.publicKey
+        user1.publicKey,
+        pool.round.toString()
       );
-
-      const recordPda = winnerRecordPda(program.programId, user1.publicKey);
 
       try {
         await program.methods
-          .submitAnswer(proofA as any, proofB as any, proofC as any, TEST_AGENT, TEST_MODEL)
-          .accounts({
-            pool: poolPda,
-            vault: vaultPda,
-            winnerRecord: recordPda,
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
             user: user1.publicKey,
             payer: sponsor.publicKey,
-          } as any)
+          })
           .signers([sponsor])
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(err.toString()).to.include("AlreadyAnswered");
+        expect(String(err)).to.include("AlreadyAnswered");
       }
     });
   });
@@ -483,52 +463,44 @@ describe("nara-quest", () => {
       await program.methods
         .createQuestion(
           "New question after round 1",
-          answerHashOnChain as any,
+          answerHashOnChain,
           deadline,
           rewardAmount,
           DEFAULT_DIFFICULTY
         )
-        .accounts({
-          pool: poolPda,
-          vault: vaultPda,
-          authority: authority.publicKey,
-        } as any)
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.round.toNumber()).to.equal(2);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(10); // max(2, 10) = 10
-      expect(pool.isActive).to.equal(true);
     });
 
     it("user1 can answer again in new round (same PDA reused)", async () => {
+      const pool = await program.account.pool.fetch(poolPda);
       const { proofA, proofB, proofC } = await generateProof(
         snarkjs,
         TEST_ANSWER,
         answerHashStr,
-        user1.publicKey
+        user1.publicKey,
+        pool.round.toString()
       );
 
-      const recordPda = winnerRecordPda(program.programId, user1.publicKey);
-
       await program.methods
-        .submitAnswer(proofA as any, proofB as any, proofC as any, TEST_AGENT, TEST_MODEL)
-        .accounts({
-          pool: poolPda,
-          winnerRecord: recordPda,
+        .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+        .accountsPartial({
           user: user1.publicKey,
           payer: sponsor.publicKey,
-        } as any)
+        })
         .signers([sponsor])
         .rpc();
 
       const poolAfter = await program.account.pool.fetch(poolPda);
       expect(poolAfter.winnerCount).to.equal(1);
 
+      const recordPda = winnerRecordPda(program.programId, user1.publicKey);
       const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
       expect(winnerRecord.round.toNumber()).to.equal(2);
-      expect(winnerRecord.rewarded).to.equal(true);
     });
   });
 
@@ -536,9 +508,6 @@ describe("nara-quest", () => {
     it("transfers authority to user1", async () => {
       await program.methods
         .transferAuthority(user1.publicKey)
-        .accounts({
-          authority: authority.publicKey,
-        } as any)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
@@ -553,19 +522,15 @@ describe("nara-quest", () => {
         await program.methods
           .createQuestion(
             "Should fail",
-            answerHashOnChain as any,
+            answerHashOnChain,
             deadline,
             new anchor.BN(LAMPORTS_PER_SOL),
             DEFAULT_DIFFICULTY
           )
-          .accounts({
-            pool: poolPda,
-            authority: authority.publicKey,
-          } as any)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(err.toString()).to.include("Unauthorized");
+        expect(String(err)).to.include("Unauthorized");
       }
     });
 
@@ -574,16 +539,14 @@ describe("nara-quest", () => {
       await program.methods
         .createQuestion(
           "New authority question",
-          answerHashOnChain as any,
+          answerHashOnChain,
           deadline,
           new anchor.BN(LAMPORTS_PER_SOL),
           DEFAULT_DIFFICULTY
         )
-        .accounts({
-          pool: poolPda,
-          vault: vaultPda,
+        .accountsPartial({
           authority: user1.publicKey,
-        } as any)
+        })
         .signers([user1])
         .rpc();
 
@@ -595,23 +558,23 @@ describe("nara-quest", () => {
       try {
         await program.methods
           .transferAuthority(user2.publicKey)
-          .accounts({
+          .accountsPartial({
             authority: user2.publicKey,
-          } as any)
+          })
           .signers([user2])
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(err.toString()).to.include("Unauthorized");
+        expect(String(err)).to.include("Unauthorized");
       }
     });
 
     it("new authority transfers back to original", async () => {
       await program.methods
         .transferAuthority(authority.publicKey)
-        .accounts({
+        .accountsPartial({
           authority: user1.publicKey,
-        } as any)
+        })
         .signers([user1])
         .rpc();
 

@@ -6,11 +6,9 @@ use crate::state::*;
 pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     let game_config = &mut ctx.accounts.game_config;
     game_config.authority = ctx.accounts.authority.key();
-    game_config.next_question_id = 1;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;
-    pool.is_active = false;
     pool.winner_count = 0;
     pool.reward_count = 0;
 

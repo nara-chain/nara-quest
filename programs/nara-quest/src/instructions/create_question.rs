@@ -19,23 +19,13 @@ pub fn handler_create_question(
     let clock = Clock::get()?;
     require!(deadline > clock.unix_timestamp, QuestError::InvalidDeadline);
 
-    require!(
-        ctx.accounts.authority.key() == ctx.accounts.game_config.authority,
-        QuestError::Unauthorized
-    );
-
-    // Assign question ID and increment counter
-    let game_config = &mut ctx.accounts.game_config;
-    let question_id = game_config.next_question_id;
-    game_config.next_question_id += 1;
-
     // Read vault leftover from previous round (exclude rent-exempt minimum)
     let vault_info = ctx.accounts.vault.to_account_info();
     let rent = Rent::get()?;
     let vault_rent = rent.minimum_balance(vault_info.data_len());
     let vault_leftover = vault_info.lamports().saturating_sub(vault_rent);
 
-    // Transfer reward SOL from authority to vault PDA (system-owned)
+    // Transfer reward from authority to vault PDA
     system_program::transfer(
         CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
@@ -63,7 +53,6 @@ pub fn handler_create_question(
 
     // Update pool state
     pool.round += 1;
-    pool.question_id = question_id;
     pool.question = question;
     pool.answer_hash = answer_hash;
     pool.deadline = deadline;
@@ -71,12 +60,10 @@ pub fn handler_create_question(
     pool.reward_count = reward_count;
     pool.reward_per_winner = reward_per_winner;
     pool.winner_count = 0;
-    pool.is_active = true;
     pool.difficulty = difficulty;
 
     msg!(
-        "Question {} created (round {}, reward_count={}, reward_per_winner={})",
-        question_id,
+        "Quest created (round {}, reward_count={}, reward_per_winner={})",
         pool.round,
         reward_count,
         reward_per_winner,
@@ -100,7 +87,7 @@ pub struct CreateQuestion<'info> {
     )]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: Vault PDA holding reward SOL (system-owned, created on first transfer)
+    /// CHECK: Vault PDA holding reward (system-owned, created on first transfer)
     #[account(
         mut,
         seeds = [VAULT_SEED],

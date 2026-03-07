@@ -8,6 +8,7 @@ pub mod state;
 use instructions::*;
 
 declare_id!("EXPLAHaMHLK9p7w5jVqEVY671NkkCKSHTNhhyUrPAboZ");
+// declare_id!("Quest11111111111111111111111111111111111111");
 
 #[program]
 pub mod nara_quest {
