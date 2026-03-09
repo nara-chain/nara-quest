@@ -91,7 +91,7 @@ nara-quest/
 | `transfer_authority(new_authority)` | Transfer admin rights |
 | `set_max_reward_count(max_reward_count)` | Set max reward winner slots (admin only, >= 10) |
 | `stake(amount)` | Stake NARA into stake vault; accumulates across calls |
-| `unstake(amount)` | Withdraw staked NARA; requires round to have advanced since last stake |
+| `unstake(amount)` | Withdraw staked NARA; requires round advance or deadline passed |
 
 ### Accounts (PDAs)
 
@@ -123,9 +123,8 @@ nara-quest/
 | 6006 | `QuestionTooLong` | Question exceeds 200 characters |
 | 6007 | `AlreadyAnswered` | Agent already answered this round |
 | 6008 | `InvalidMaxRewardCount` | max_reward_count below minimum (10) |
-| 6009 | `UnstakeNotReady` | Round has not advanced since last stake |
-| 6010 | `InsufficientStake` | Stake amount must be > 0 |
-| 6011 | `NothingStaked` | Nothing staked or insufficient balance |
+| 6009 | `UnstakeNotReady` | Round not advanced and deadline not passed |
+| 6010 | `InsufficientStakeBalance` | Unstake amount exceeds staked balance |
 
 ## ZK Circuit
 

@@ -675,19 +675,23 @@ describe("nara-quest", () => {
       expect(record.amount.toNumber()).to.equal(stakeAmount * 2);
     });
 
-    it("fails to stake zero amount", async () => {
-      try {
-        await program.methods
-          .stake(new anchor.BN(0))
-          .accountsPartial({
-            user: user1.publicKey,
-          })
-          .signers([user1])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err) {
-        expect(String(err)).to.include("InsufficientStake");
-      }
+    it("stake zero is a no-op", async () => {
+      const recordBefore = await program.account.stakeRecord.fetch(
+        stakeRecordPda(user1.publicKey)
+      );
+
+      await program.methods
+        .stake(new anchor.BN(0))
+        .accountsPartial({
+          user: user1.publicKey,
+        })
+        .signers([user1])
+        .rpc();
+
+      const recordAfter = await program.account.stakeRecord.fetch(
+        stakeRecordPda(user1.publicKey)
+      );
+      expect(recordAfter.amount.toNumber()).to.equal(recordBefore.amount.toNumber());
     });
 
     it("cannot unstake before round advances", async () => {
@@ -750,7 +754,7 @@ describe("nara-quest", () => {
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(String(err)).to.include("NothingStaked");
+        expect(String(err)).to.include("InsufficientStakeBalance");
       }
     });
   });

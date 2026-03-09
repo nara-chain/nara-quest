@@ -2,11 +2,12 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
 use crate::constants::*;
-use crate::errors::QuestError;
 use crate::state::*;
 
 pub fn handler_stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
-    require!(amount > 0, QuestError::InsufficientStake);
+    if amount == 0 {
+        return Ok(());
+    }
 
     // Transfer lamports from user to stake vault
     system_program::transfer(

@@ -6,16 +6,21 @@ use crate::errors::QuestError;
 use crate::state::*;
 
 pub fn handler_unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
-    require!(amount > 0, QuestError::InsufficientStake);
+    if amount == 0 {
+        return Ok(());
+    }
 
     let stake_record = &mut ctx.accounts.stake_record;
     let pool = &ctx.accounts.pool;
 
-    // Must wait for round to advance after staking
-    require!(pool.round > stake_record.stake_round, QuestError::UnstakeNotReady);
+    // Can unstake if round advanced OR deadline passed
+    let clock = Clock::get()?;
+    let can_unstake = pool.round > stake_record.stake_round
+        || (pool.deadline > 0 && clock.unix_timestamp > pool.deadline);
+    require!(can_unstake, QuestError::UnstakeNotReady);
 
     // Check sufficient staked balance
-    require!(stake_record.amount >= amount, QuestError::NothingStaked);
+    require!(stake_record.amount >= amount, QuestError::InsufficientStakeBalance);
 
     // Transfer lamports from stake vault to user
     let vault_bump = ctx.bumps.stake_vault;

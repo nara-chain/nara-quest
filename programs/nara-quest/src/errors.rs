@@ -29,12 +29,9 @@ pub enum QuestError {
     #[msg("max_reward_count must be >= MIN_REWARD_COUNT")]
     InvalidMaxRewardCount,
 
-    #[msg("Cannot unstake until round advances")]
+    #[msg("Cannot unstake until round advances or deadline passes")]
     UnstakeNotReady,
 
-    #[msg("Stake amount must be greater than zero")]
-    InsufficientStake,
-
-    #[msg("Nothing staked or insufficient balance to unstake")]
-    NothingStaked,
+    #[msg("Unstake amount exceeds staked balance")]
+    InsufficientStakeBalance,
 }
