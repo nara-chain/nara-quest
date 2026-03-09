@@ -227,6 +227,9 @@ describe("nara-quest", () => {
       expect(pool.round.toNumber()).to.equal(0);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(0);
+      expect(pool.stakeRequirement.toNumber()).to.equal(0);
+
+      expect(gameConfig.maxRewardCount).to.equal(1000);
     });
 
     it("cannot initialize twice", async () => {
@@ -582,6 +585,173 @@ describe("nara-quest", () => {
       expect(gameConfig.authority.toBase58()).to.equal(
         authority.publicKey.toBase58()
       );
+    });
+  });
+
+  describe("set_max_reward_count", () => {
+    it("authority can set max_reward_count", async () => {
+      await program.methods
+        .setMaxRewardCount(500)
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.maxRewardCount).to.equal(500);
+    });
+
+    it("fails if non-authority tries to set", async () => {
+      try {
+        await program.methods
+          .setMaxRewardCount(100)
+          .accountsPartial({
+            authority: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("Unauthorized");
+      }
+    });
+
+    it("fails if value < MIN_REWARD_COUNT (10)", async () => {
+      try {
+        await program.methods
+          .setMaxRewardCount(5)
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidMaxRewardCount");
+      }
+    });
+
+    it("restores max_reward_count to 1000", async () => {
+      await program.methods
+        .setMaxRewardCount(1000)
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.maxRewardCount).to.equal(1000);
+    });
+  });
+
+  describe("stake and unstake", () => {
+    const stakeAmount = 0.1 * LAMPORTS_PER_SOL;
+
+    function stakeRecordPda(user: PublicKey): PublicKey {
+      const [pda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("quest_stake"), user.toBuffer()],
+        program.programId
+      );
+      return pda;
+    }
+
+    it("user1 can stake", async () => {
+      await program.methods
+        .stake(new anchor.BN(stakeAmount))
+        .accountsPartial({
+          user: user1.publicKey,
+        })
+        .signers([user1])
+        .rpc();
+
+      const record = await program.account.stakeRecord.fetch(
+        stakeRecordPda(user1.publicKey)
+      );
+      expect(record.amount.toNumber()).to.equal(stakeAmount);
+    });
+
+    it("user1 can stake more (accumulates)", async () => {
+      await program.methods
+        .stake(new anchor.BN(stakeAmount))
+        .accountsPartial({
+          user: user1.publicKey,
+        })
+        .signers([user1])
+        .rpc();
+
+      const record = await program.account.stakeRecord.fetch(
+        stakeRecordPda(user1.publicKey)
+      );
+      expect(record.amount.toNumber()).to.equal(stakeAmount * 2);
+    });
+
+    it("fails to stake zero amount", async () => {
+      try {
+        await program.methods
+          .stake(new anchor.BN(0))
+          .accountsPartial({
+            user: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InsufficientStake");
+      }
+    });
+
+    it("cannot unstake before round advances", async () => {
+      // user1 staked in current round, unstake should fail
+      try {
+        await program.methods
+          .unstake(new anchor.BN(stakeAmount))
+          .accountsPartial({
+            user: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("UnstakeNotReady");
+      }
+    });
+
+    it("can unstake after round advances", async () => {
+      // Create a new question to advance round
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Round advance for unstake test",
+          answerHashOnChain,
+          deadline,
+          new anchor.BN(LAMPORTS_PER_SOL),
+          DEFAULT_DIFFICULTY
+        )
+        .rpc();
+
+      const balanceBefore = await provider.connection.getBalance(user1.publicKey);
+
+      await program.methods
+        .unstake(new anchor.BN(stakeAmount))
+        .accountsPartial({
+          user: user1.publicKey,
+        })
+        .signers([user1])
+        .rpc();
+
+      const record = await program.account.stakeRecord.fetch(
+        stakeRecordPda(user1.publicKey)
+      );
+      expect(record.amount.toNumber()).to.equal(stakeAmount); // had 2x, unstaked 1x
+
+      const balanceAfter = await provider.connection.getBalance(user1.publicKey);
+      // Balance should increase by stakeAmount minus tx fee
+      expect(balanceAfter).to.be.greaterThan(balanceBefore);
+    });
+
+    it("fails to unstake more than staked", async () => {
+      try {
+        await program.methods
+          .unstake(new anchor.BN(LAMPORTS_PER_SOL)) // way more than staked
+          .accountsPartial({
+            user: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("NothingStaked");
+      }
     });
   });
 });

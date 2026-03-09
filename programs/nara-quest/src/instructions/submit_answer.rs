@@ -65,33 +65,48 @@ pub fn handler_submit_answer(
     let pool = &mut ctx.accounts.pool;
     pool.winner_count += 1;
 
-    // Instant reward: transfer if within reward_count limit
+    // Instant reward: transfer if within reward_count limit and staking requirement met
+    let user_stake = ctx.accounts.stake_record.amount;
     let reward_lamports;
     if pool.winner_count <= pool.reward_count {
-        let reward = pool.reward_per_winner;
-        reward_lamports = reward;
+        let stake_ok = pool.stake_requirement == 0 || user_stake >= pool.stake_requirement;
+        if stake_ok {
+            let reward = pool.reward_per_winner;
+            reward_lamports = reward;
 
-        // Transfer lamports from vault PDA to user via system_program::transfer
-        let vault_bump = ctx.bumps.vault;
-        let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
-        system_program::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.system_program.to_account_info(),
-                system_program::Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.user.to_account_info(),
-                },
-                signer_seeds,
-            ),
-            reward,
-        )?;
+            // Transfer lamports from vault PDA to user via system_program::transfer
+            let vault_bump = ctx.bumps.vault;
+            let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
+            system_program::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.user.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                reward,
+            )?;
 
-        msg!(
-            "Answer verified, reward {} lamports (winner {}/{})",
-            reward,
-            pool.winner_count,
-            pool.reward_count
-        );
+            // Track minimum stake among rewarded winners
+            pool.min_winner_stake = pool.min_winner_stake.min(user_stake);
+
+            msg!(
+                "Answer verified, reward {} lamports (winner {}/{})",
+                reward,
+                pool.winner_count,
+                pool.reward_count
+            );
+        } else {
+            reward_lamports = 0;
+
+            msg!(
+                "Answer verified, no reward (stake {} < requirement {})",
+                user_stake,
+                pool.stake_requirement
+            );
+        }
     } else {
         reward_lamports = 0;
 
@@ -150,6 +165,15 @@ pub struct SubmitAnswer<'info> {
         bump,
     )]
     pub winner_record: Account<'info, WinnerRecord>,
+
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + StakeRecord::INIT_SPACE,
+        seeds = [STAKE_SEED, user.key().as_ref()],
+        bump,
+    )]
+    pub stake_record: Account<'info, StakeRecord>,
 
     /// CHECK: Vault PDA holding reward (system-owned)
     #[account(

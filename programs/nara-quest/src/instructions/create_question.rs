@@ -40,13 +40,31 @@ pub fn handler_create_question(
     // Total reward = new deposit + leftover from previous round
     let total_reward = reward_amount + vault_leftover;
 
-    // Calculate reward_count: max(previous_winner_count, MIN_REWARD_COUNT)
+    // Calculate reward_count: min(max(previous_winner_count, MIN_REWARD_COUNT), max_reward_count)
     let pool = &mut ctx.accounts.pool;
+    let max_reward_count = ctx.accounts.game_config.max_reward_count;
     let prev_winner_count = pool.winner_count;
-    let reward_count = if prev_winner_count >= MIN_REWARD_COUNT {
+    let prev_min_winner_stake = pool.min_winner_stake;
+
+    let uncapped = if prev_winner_count >= MIN_REWARD_COUNT {
         prev_winner_count
     } else {
         MIN_REWARD_COUNT
+    };
+    let reward_count = if uncapped > max_reward_count {
+        max_reward_count
+    } else {
+        uncapped
+    };
+
+    // Calculate stake_requirement for this round
+    let stake_requirement = if prev_winner_count >= max_reward_count
+        && prev_min_winner_stake != u64::MAX
+        && prev_min_winner_stake > 0
+    {
+        prev_min_winner_stake
+    } else {
+        0
     };
 
     let reward_per_winner = total_reward / reward_count as u64;
@@ -61,6 +79,8 @@ pub fn handler_create_question(
     pool.reward_per_winner = reward_per_winner;
     pool.winner_count = 0;
     pool.difficulty = difficulty;
+    pool.stake_requirement = stake_requirement;
+    pool.min_winner_stake = u64::MAX;
 
     msg!(
         "Quest created (round {}, reward_count={}, reward_per_winner={})",

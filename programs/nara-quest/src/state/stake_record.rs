@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 
 #[account]
 #[derive(InitSpace)]
-pub struct GameConfig {
-    pub authority: Pubkey,
-    pub max_reward_count: u32,
+pub struct StakeRecord {
+    pub amount: u64,
+    pub stake_round: u64,
     pub _padding: [u8; 64],
 }

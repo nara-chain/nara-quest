@@ -25,4 +25,16 @@ pub enum QuestError {
 
     #[msg("Already answered this round")]
     AlreadyAnswered,
+
+    #[msg("max_reward_count must be >= MIN_REWARD_COUNT")]
+    InvalidMaxRewardCount,
+
+    #[msg("Cannot unstake until round advances")]
+    UnstakeNotReady,
+
+    #[msg("Stake amount must be greater than zero")]
+    InsufficientStake,
+
+    #[msg("Nothing staked or insufficient balance to unstake")]
+    NothingStaked,
 }
