@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use anchor_spl::token::{Mint, Token, TokenAccount};
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};
 
 use crate::constants::*;
@@ -66,7 +67,8 @@ pub fn handler_submit_answer(
     pool.winner_count += 1;
 
     // Instant reward: transfer if within reward_count limit and staking requirement met
-    let user_stake = ctx.accounts.stake_record.amount;
+    // User's staked amount = WSOL balance in their stake token account
+    let user_stake = ctx.accounts.stake_token_account.amount;
     let reward_lamports;
     if pool.winner_count <= pool.reward_count {
         let stake_ok = pool.stake_requirement == 0 || user_stake >= pool.stake_requirement;
@@ -175,6 +177,17 @@ pub struct SubmitAnswer<'info> {
     )]
     pub stake_record: Account<'info, StakeRecord>,
 
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = wsol_mint,
+        associated_token::authority = stake_record,
+    )]
+    pub stake_token_account: Account<'info, TokenAccount>,
+
+    #[account(address = anchor_spl::token::spl_token::native_mint::id())]
+    pub wsol_mint: Account<'info, Mint>,
+
     /// CHECK: Vault PDA holding reward (system-owned)
     #[account(
         mut,
@@ -190,6 +203,8 @@ pub struct SubmitAnswer<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 

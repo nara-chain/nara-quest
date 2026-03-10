@@ -7,6 +7,10 @@ import {
   PublicKey,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+import {
+  NATIVE_MINT,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import * as path from "path";
 
 // -- Type definitions for untyped dependencies --
@@ -359,6 +363,7 @@ describe("nara-quest", () => {
           .accountsPartial({
             user: user1.publicKey,
             payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
           })
           .signers([sponsor])
           .rpc();
@@ -402,6 +407,7 @@ describe("nara-quest", () => {
         .accountsPartial({
           user: user2.publicKey,
           payer: sponsor.publicKey,
+          wsolMint: NATIVE_MINT,
         })
         .signers([sponsor])
         .rpc();
@@ -446,6 +452,7 @@ describe("nara-quest", () => {
           .accountsPartial({
             user: user1.publicKey,
             payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
           })
           .signers([sponsor])
           .rpc();
@@ -688,19 +695,36 @@ describe("nara-quest", () => {
       return pda;
     }
 
+    function stakeTokenAccount(user: PublicKey): PublicKey {
+      return getAssociatedTokenAddressSync(
+        NATIVE_MINT,
+        stakeRecordPda(user),
+        true // allowOwnerOffCurve (PDA)
+      );
+    }
+
+    // Helper: get WSOL balance in stake token account
+    async function getStakedAmount(user: PublicKey): Promise<number> {
+      const ata = stakeTokenAccount(user);
+      const info = await provider.connection.getAccountInfo(ata);
+      if (!info) return 0;
+      // SPL token account data: amount is at offset 64, 8 bytes LE
+      const amount = info.data.readBigUInt64LE(64);
+      return Number(amount);
+    }
+
     it("user1 can stake", async () => {
       await program.methods
         .stake(new anchor.BN(stakeAmount))
         .accountsPartial({
           user: user1.publicKey,
+          wsolMint: NATIVE_MINT,
         })
         .signers([user1])
         .rpc();
 
-      const record = await program.account.stakeRecord.fetch(
-        stakeRecordPda(user1.publicKey)
-      );
-      expect(record.amount.toNumber()).to.equal(stakeAmount);
+      const staked = await getStakedAmount(user1.publicKey);
+      expect(staked).to.equal(stakeAmount);
     });
 
     it("user1 can stake more (accumulates)", async () => {
@@ -708,42 +732,38 @@ describe("nara-quest", () => {
         .stake(new anchor.BN(stakeAmount))
         .accountsPartial({
           user: user1.publicKey,
+          wsolMint: NATIVE_MINT,
         })
         .signers([user1])
         .rpc();
 
-      const record = await program.account.stakeRecord.fetch(
-        stakeRecordPda(user1.publicKey)
-      );
-      expect(record.amount.toNumber()).to.equal(stakeAmount * 2);
+      const staked = await getStakedAmount(user1.publicKey);
+      expect(staked).to.equal(stakeAmount * 2);
     });
 
     it("stake zero is a no-op", async () => {
-      const recordBefore = await program.account.stakeRecord.fetch(
-        stakeRecordPda(user1.publicKey)
-      );
+      const stakedBefore = await getStakedAmount(user1.publicKey);
 
       await program.methods
         .stake(new anchor.BN(0))
         .accountsPartial({
           user: user1.publicKey,
+          wsolMint: NATIVE_MINT,
         })
         .signers([user1])
         .rpc();
 
-      const recordAfter = await program.account.stakeRecord.fetch(
-        stakeRecordPda(user1.publicKey)
-      );
-      expect(recordAfter.amount.toNumber()).to.equal(recordBefore.amount.toNumber());
+      const stakedAfter = await getStakedAmount(user1.publicKey);
+      expect(stakedAfter).to.equal(stakedBefore);
     });
 
     it("cannot unstake before round advances", async () => {
-      // user1 staked in current round, unstake should fail
       try {
         await program.methods
           .unstake(new anchor.BN(stakeAmount))
           .accountsPartial({
             user: user1.publicKey,
+            wsolMint: NATIVE_MINT,
           })
           .signers([user1])
           .rpc();
@@ -772,14 +792,13 @@ describe("nara-quest", () => {
         .unstake(new anchor.BN(stakeAmount))
         .accountsPartial({
           user: user1.publicKey,
+          wsolMint: NATIVE_MINT,
         })
         .signers([user1])
         .rpc();
 
-      const record = await program.account.stakeRecord.fetch(
-        stakeRecordPda(user1.publicKey)
-      );
-      expect(record.amount.toNumber()).to.equal(stakeAmount); // had 2x, unstaked 1x
+      const staked = await getStakedAmount(user1.publicKey);
+      expect(staked).to.equal(stakeAmount); // had 2x, unstaked 1x
 
       const balanceAfter = await provider.connection.getBalance(user1.publicKey);
       // Balance should increase by stakeAmount minus tx fee
@@ -792,6 +811,7 @@ describe("nara-quest", () => {
           .unstake(new anchor.BN(LAMPORTS_PER_SOL)) // way more than staked
           .accountsPartial({
             user: user1.publicKey,
+            wsolMint: NATIVE_MINT,
           })
           .signers([user1])
           .rpc();

@@ -3,7 +3,6 @@ pub const POOL_SEED: &[u8] = b"quest_pool";
 pub const VAULT_SEED: &[u8] = b"quest_vault";
 pub const WINNER_SEED: &[u8] = b"quest_winner";
 pub const STAKE_SEED: &[u8] = b"quest_stake";
-pub const STAKE_VAULT_SEED: &[u8] = b"quest_stake_vault";
 
 pub const MAX_QUESTION_LEN: usize = 200;
 pub const DEFAULT_MIN_REWARD_COUNT: u32 = 10;

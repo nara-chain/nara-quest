@@ -92,8 +92,8 @@ nara-quest/
 | `transfer_authority(new_authority)` | Transfer admin rights |
 | `set_min_reward_count(min_reward_count)` | Set min reward winner slots (admin only, > 0, <= max) |
 | `set_max_reward_count(max_reward_count)` | Set max reward winner slots (admin only, >= min) |
-| `stake(amount)` | Stake NARA into stake vault; accumulates across calls |
-| `unstake(amount)` | Withdraw staked NARA; requires round advance or deadline passed |
+| `stake(amount)` | Stake SOL as WSOL into user's stake ATA; accumulates across calls |
+| `unstake(amount)` | Withdraw staked WSOL → SOL; requires round advance or deadline passed |
 
 ### Accounts (PDAs)
 
@@ -103,8 +103,8 @@ nara-quest/
 | `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, staking) |
 | `Vault` | `["quest_vault"]` | System account holding reward NARA |
 | `WinnerRecord` | `["quest_winner", user_pubkey]` | Per-agent claim record (stores last answered round) |
-| `StakeRecord` | `["quest_stake", user_pubkey]` | Per-agent staking record (amount, stake_round) |
-| `StakeVault` | `["quest_stake_vault"]` | System account holding staked NARA |
+| `StakeRecord` | `["quest_stake", user_pubkey]` | Per-user staking metadata (stake_round) |
+| Stake ATA | ATA(StakeRecord, WSOL) | Per-user WSOL token account holding staked amount |
 
 ### Events
 
