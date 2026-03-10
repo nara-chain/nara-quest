@@ -6,7 +6,8 @@ use crate::state::*;
 pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     let game_config = &mut ctx.accounts.game_config;
     game_config.authority = ctx.accounts.authority.key();
-    game_config.max_reward_count = crate::constants::DEFAULT_MAX_REWARD_COUNT;
+    game_config.min_reward_count = DEFAULT_MIN_REWARD_COUNT;
+    game_config.max_reward_count = DEFAULT_MAX_REWARD_COUNT;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;

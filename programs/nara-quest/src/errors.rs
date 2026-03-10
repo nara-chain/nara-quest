@@ -26,7 +26,10 @@ pub enum QuestError {
     #[msg("Already answered this round")]
     AlreadyAnswered,
 
-    #[msg("max_reward_count must be >= MIN_REWARD_COUNT")]
+    #[msg("min_reward_count must be > 0 and <= max_reward_count")]
+    InvalidMinRewardCount,
+
+    #[msg("max_reward_count must be >= min_reward_count")]
     InvalidMaxRewardCount,
 
     #[msg("Cannot unstake until round advances or deadline passes")]

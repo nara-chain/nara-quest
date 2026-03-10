@@ -4,20 +4,23 @@ use crate::constants::*;
 use crate::errors::QuestError;
 use crate::state::*;
 
-pub fn handler_set_max_reward_count(
-    ctx: Context<SetMaxRewardCount>,
-    max_reward_count: u32,
+pub fn handler_set_min_reward_count(
+    ctx: Context<SetMinRewardCount>,
+    min_reward_count: u32,
 ) -> Result<()> {
     let game_config = &mut ctx.accounts.game_config;
-    require!(max_reward_count >= game_config.min_reward_count, QuestError::InvalidMaxRewardCount);
-    game_config.max_reward_count = max_reward_count;
+    require!(
+        min_reward_count > 0 && min_reward_count <= game_config.max_reward_count,
+        QuestError::InvalidMinRewardCount
+    );
+    game_config.min_reward_count = min_reward_count;
 
-    msg!("max_reward_count set to {}", max_reward_count);
+    msg!("min_reward_count set to {}", min_reward_count);
     Ok(())
 }
 
 #[derive(Accounts)]
-pub struct SetMaxRewardCount<'info> {
+pub struct SetMinRewardCount<'info> {
     #[account(
         mut,
         seeds = [QUEST_CONFIG_SEED],

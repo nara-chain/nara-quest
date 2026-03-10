@@ -229,6 +229,7 @@ describe("nara-quest", () => {
       expect(pool.rewardCount).to.equal(0);
       expect(pool.stakeRequirement.toNumber()).to.equal(0);
 
+      expect(gameConfig.minRewardCount).to.equal(10);
       expect(gameConfig.maxRewardCount).to.equal(1000);
     });
 
@@ -613,7 +614,7 @@ describe("nara-quest", () => {
       }
     });
 
-    it("fails if value < MIN_REWARD_COUNT (10)", async () => {
+    it("fails if value < min_reward_count", async () => {
       try {
         await program.methods
           .setMaxRewardCount(5)
@@ -631,6 +632,48 @@ describe("nara-quest", () => {
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
       expect(gameConfig.maxRewardCount).to.equal(1000);
+    });
+  });
+
+  describe("set_min_reward_count", () => {
+    it("authority can set min_reward_count", async () => {
+      await program.methods
+        .setMinRewardCount(20)
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.minRewardCount).to.equal(20);
+    });
+
+    it("fails if value is 0", async () => {
+      try {
+        await program.methods
+          .setMinRewardCount(0)
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidMinRewardCount");
+      }
+    });
+
+    it("fails if value > max_reward_count", async () => {
+      try {
+        await program.methods
+          .setMinRewardCount(2000)
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidMinRewardCount");
+      }
+    });
+
+    it("restores min_reward_count to 10", async () => {
+      await program.methods
+        .setMinRewardCount(10)
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.minRewardCount).to.equal(10);
     });
   });
 

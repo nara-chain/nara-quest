@@ -40,16 +40,17 @@ pub fn handler_create_question(
     // Total reward = new deposit + leftover from previous round
     let total_reward = reward_amount + vault_leftover;
 
-    // Calculate reward_count: min(max(previous_winner_count, MIN_REWARD_COUNT), max_reward_count)
+    // Calculate reward_count: min(max(previous_winner_count, min_reward_count), max_reward_count)
     let pool = &mut ctx.accounts.pool;
+    let min_reward_count = ctx.accounts.game_config.min_reward_count;
     let max_reward_count = ctx.accounts.game_config.max_reward_count;
     let prev_winner_count = pool.winner_count;
     let prev_min_winner_stake = pool.min_winner_stake;
 
-    let uncapped = if prev_winner_count >= MIN_REWARD_COUNT {
+    let uncapped = if prev_winner_count >= min_reward_count {
         prev_winner_count
     } else {
-        MIN_REWARD_COUNT
+        min_reward_count
     };
     let reward_count = if uncapped > max_reward_count {
         max_reward_count

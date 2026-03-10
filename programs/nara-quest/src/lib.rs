@@ -44,6 +44,10 @@ pub mod nara_quest {
         instructions::transfer_authority::handler_transfer_authority(ctx, new_authority)
     }
 
+    pub fn set_min_reward_count(ctx: Context<SetMinRewardCount>, min_reward_count: u32) -> Result<()> {
+        instructions::set_min_reward_count::handler_set_min_reward_count(ctx, min_reward_count)
+    }
+
     pub fn set_max_reward_count(ctx: Context<SetMaxRewardCount>, max_reward_count: u32) -> Result<()> {
         instructions::set_max_reward_count::handler_set_max_reward_count(ctx, max_reward_count)
     }

@@ -57,7 +57,7 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 ```
 nara-quest/
 +-- programs/nara-quest/src/     # Anchor program
-|   +-- lib.rs                   # Program entry (7 instructions)
+|   +-- lib.rs                   # Program entry (8 instructions)
 |   +-- constants.rs             # PDA seeds & Groth16 verifying key
 |   +-- errors.rs                # Custom errors
 |   +-- instructions/
@@ -65,6 +65,7 @@ nara-quest/
 |   |   +-- create_question.rs   # Post a new quest
 |   |   +-- submit_answer.rs     # Verify ZK proof & distribute reward
 |   |   +-- transfer_authority.rs
+|   |   +-- set_min_reward_count.rs # Admin: set min reward count
 |   |   +-- set_max_reward_count.rs # Admin: set max reward count
 |   |   +-- stake.rs             # User: stake NARA
 |   |   +-- unstake.rs           # User: unstake NARA
@@ -89,7 +90,8 @@ nara-quest/
 | `create_question(question, answer_hash, deadline, reward_amount, difficulty)` | Post a new quest with Poseidon-hashed answer and difficulty level |
 | `submit_answer(proof_a, proof_b, proof_c, agent, model)` | Submit Groth16 proof with agent attribution; instant reward on success |
 | `transfer_authority(new_authority)` | Transfer admin rights |
-| `set_max_reward_count(max_reward_count)` | Set max reward winner slots (admin only, >= 10) |
+| `set_min_reward_count(min_reward_count)` | Set min reward winner slots (admin only, > 0, <= max) |
+| `set_max_reward_count(max_reward_count)` | Set max reward winner slots (admin only, >= min) |
 | `stake(amount)` | Stake NARA into stake vault; accumulates across calls |
 | `unstake(amount)` | Withdraw staked NARA; requires round advance or deadline passed |
 
@@ -97,7 +99,7 @@ nara-quest/
 
 | Account | Seeds | Description |
 |---|---|---|
-| `GameConfig` | `["quest_config"]` | Authority pubkey, max_reward_count |
+| `GameConfig` | `["quest_config"]` | Authority pubkey, min/max_reward_count |
 | `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, staking) |
 | `Vault` | `["quest_vault"]` | System account holding reward NARA |
 | `WinnerRecord` | `["quest_winner", user_pubkey]` | Per-agent claim record (stores last answered round) |
@@ -122,9 +124,10 @@ nara-quest/
 | 6005 | `InsufficientReward` | Reward amount is zero |
 | 6006 | `QuestionTooLong` | Question exceeds 200 characters |
 | 6007 | `AlreadyAnswered` | Agent already answered this round |
-| 6008 | `InvalidMaxRewardCount` | max_reward_count below minimum (10) |
-| 6009 | `UnstakeNotReady` | Round not advanced and deadline not passed |
-| 6010 | `InsufficientStakeBalance` | Unstake amount exceeds staked balance |
+| 6008 | `InvalidMinRewardCount` | min_reward_count must be > 0 and <= max |
+| 6009 | `InvalidMaxRewardCount` | max_reward_count must be >= min |
+| 6010 | `UnstakeNotReady` | Round not advanced and deadline not passed |
+| 6011 | `InsufficientStakeBalance` | Unstake amount exceeds staked balance |
 
 ## ZK Circuit
 
