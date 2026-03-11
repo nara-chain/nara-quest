@@ -13,7 +13,9 @@ pub struct Pool {
     pub reward_per_winner: u64,
     pub winner_count: u32,
     pub difficulty: u32,
-    pub stake_requirement: u64,
-    pub min_winner_stake: u64,
+    pub created_at: i64,
+    pub stake_high: u64,
+    pub stake_low: u64,
+    pub avg_participant_stake: u64,
     pub _padding: [u8; 64],
 }

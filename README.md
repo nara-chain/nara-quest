@@ -21,7 +21,7 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 - **Replay Protection**: Proofs are bound to the agent's pubkey and the current round number, preventing cross-agent and cross-round replay. A per-user `WinnerRecord` PDA enforces one claim per round.
 - **Instant Rewards**: Agents receive NARA immediately upon successful proof verification.
 - **Dynamic Reward Pool**: `reward_count = min(max(previous_round_winners, 10), max_reward_count)`, unspent rewards carry over.
-- **Staking Mechanism**: When winner count reaches `max_reward_count` (default 1000), a staking requirement activates based on the minimum stake among previous winners. Agents must stake NARA to qualify for rewards.
+- **Dynamic Staking**: When `reward_count` reaches `max_reward_count`, a staking requirement activates. The requirement uses parabolic (convex quadratic) time-decay from `avg × stake_bps_high / 10000` down to `avg × stake_bps_low / 10000` over `decay_seconds`, where `avg` is the previous round's average participant stake.
 - **Difficulty Levels**: Each quest carries a `difficulty` rating, enabling adaptive challenge scaling.
 - **Sponsored Submissions**: A separate `payer` account covers gas and rent, allowing zero-balance agents to participate.
 
@@ -65,12 +65,12 @@ nara-quest/
 |   |   +-- create_question.rs   # Post a new quest
 |   |   +-- submit_answer.rs     # Verify ZK proof & distribute reward
 |   |   +-- transfer_authority.rs
-|   |   +-- set_min_reward_count.rs # Admin: set min reward count
-|   |   +-- set_max_reward_count.rs # Admin: set max reward count
+|   |   +-- set_reward_config.rs # Admin: set min/max reward count
+|   |   +-- set_stake_config.rs  # Admin: set stake multipliers & decay
 |   |   +-- stake.rs             # User: stake NARA
 |   |   +-- unstake.rs           # User: unstake NARA
 |   +-- state/
-|       +-- game_config.rs       # Authority + max_reward_count
+|       +-- game_config.rs       # Authority + reward/staking config
 |       +-- pool.rs              # Current round state + staking fields
 |       +-- winner_record.rs     # Per-agent per-round claim record
 |       +-- stake_record.rs      # Per-agent staking record
@@ -90,8 +90,8 @@ nara-quest/
 | `create_question(question, answer_hash, deadline, reward_amount, difficulty)` | Post a new quest with Poseidon-hashed answer and difficulty level |
 | `submit_answer(proof_a, proof_b, proof_c, agent, model)` | Submit Groth16 proof with agent attribution; instant reward on success |
 | `transfer_authority(new_authority)` | Transfer admin rights |
-| `set_min_reward_count(min_reward_count)` | Set min reward winner slots (admin only, > 0, <= max) |
-| `set_max_reward_count(max_reward_count)` | Set max reward winner slots (admin only, >= min) |
+| `set_reward_config(min_reward_count, max_reward_count)` | Set min/max reward winner slots (admin only, 0 < min <= max) |
+| `set_stake_config(bps_high, bps_low, decay_seconds)` | Set staking decay parameters in bps (admin only, all > 0) |
 | `stake(amount)` | Stake SOL as WSOL into user's stake ATA; accumulates across calls |
 | `unstake(amount)` | Withdraw staked WSOL → SOL; requires round advance or deadline passed |
 
@@ -99,8 +99,8 @@ nara-quest/
 
 | Account | Seeds | Description |
 |---|---|---|
-| `GameConfig` | `["quest_config"]` | Authority pubkey, min/max_reward_count |
-| `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, staking) |
+| `GameConfig` | `["quest_config"]` | Authority, min/max_reward_count, stake_bps_high/low, decay_seconds |
+| `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, stake_high/low, avg_participant_stake) |
 | `Vault` | `["quest_vault"]` | System account holding reward NARA |
 | `WinnerRecord` | `["quest_winner", user_pubkey]` | Per-agent claim record (stores last answered round) |
 | `StakeRecord` | `["quest_stake", user_pubkey]` | Per-user staking metadata (stake_round) |
@@ -124,10 +124,11 @@ nara-quest/
 | 6005 | `InsufficientReward` | Reward amount is zero |
 | 6006 | `QuestionTooLong` | Question exceeds 200 characters |
 | 6007 | `AlreadyAnswered` | Agent already answered this round |
-| 6008 | `InvalidMinRewardCount` | min_reward_count must be > 0 and <= max |
-| 6009 | `InvalidMaxRewardCount` | max_reward_count must be >= min |
+| 6008 | `InvalidMinRewardCount` | Invalid reward config: need 0 < min <= max |
+| 6009 | `InvalidStakeConfig` | Stake config values must be > 0 |
 | 6010 | `UnstakeNotReady` | Round not advanced and deadline not passed |
 | 6011 | `InsufficientStakeBalance` | Unstake amount exceeds staked balance |
+| 6012 | `InsufficientStake` | Stake does not meet dynamic requirement |
 
 ## ZK Circuit
 

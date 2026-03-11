@@ -26,15 +26,18 @@ pub enum QuestError {
     #[msg("Already answered this round")]
     AlreadyAnswered,
 
-    #[msg("min_reward_count must be > 0 and <= max_reward_count")]
+    #[msg("Invalid reward config: need 0 < min <= max")]
     InvalidMinRewardCount,
 
-    #[msg("max_reward_count must be >= min_reward_count")]
-    InvalidMaxRewardCount,
+    #[msg("Stake config values must be > 0")]
+    InvalidStakeConfig,
 
     #[msg("Cannot unstake until round advances or deadline passes")]
     UnstakeNotReady,
 
     #[msg("Unstake amount exceeds staked balance")]
     InsufficientStakeBalance,
+
+    #[msg("Stake does not meet dynamic requirement")]
+    InsufficientStake,
 }

@@ -66,57 +66,80 @@ pub fn handler_submit_answer(
     let pool = &mut ctx.accounts.pool;
     pool.winner_count += 1;
 
-    // Instant reward: transfer if within reward_count limit and staking requirement met
     // User's staked amount = WSOL balance in their stake token account
     let user_stake = ctx.accounts.stake_token_account.amount;
-    let reward_lamports;
-    if pool.winner_count <= pool.reward_count {
-        let stake_ok = pool.stake_requirement == 0 || user_stake >= pool.stake_requirement;
-        if stake_ok {
-            let reward = pool.reward_per_winner;
-            reward_lamports = reward;
+    let game_config = &ctx.accounts.game_config;
 
-            // Transfer lamports from vault PDA to user via system_program::transfer
-            let vault_bump = ctx.bumps.vault;
-            let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
-            system_program::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.system_program.to_account_info(),
-                    system_program::Transfer {
-                        from: ctx.accounts.vault.to_account_info(),
-                        to: ctx.accounts.user.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                reward,
-            )?;
-
-            // Track minimum stake among rewarded winners
-            pool.min_winner_stake = pool.min_winner_stake.min(user_stake);
-
-            msg!(
-                "Answer verified, reward {} lamports (winner {}/{})",
-                reward,
-                pool.winner_count,
-                pool.reward_count
-            );
-        } else {
-            reward_lamports = 0;
-
-            msg!(
-                "Answer verified, no reward (stake {} < requirement {})",
-                user_stake,
-                pool.stake_requirement
-            );
-        }
+    // Stake check: only activated when reward_count == max_reward_count (system at capacity)
+    let stake_ok = if pool.reward_count < game_config.max_reward_count {
+        true // not at capacity, no staking required
     } else {
-        reward_lamports = 0;
+        // At capacity: calculate dynamic stake requirement (parabolic decay)
+        let elapsed = clock.unix_timestamp.saturating_sub(pool.created_at);
+        let decay = game_config.decay_seconds;
+
+        let effective_req = if decay <= 0 || elapsed >= decay {
+            pool.stake_low
+        } else {
+            let range = pool.stake_high.saturating_sub(pool.stake_low);
+            let elapsed_u = elapsed as u64;
+            let decay_u = decay as u64;
+            // Convex parabola: high - (high - low) × (elapsed/decay)²
+            pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
+        };
+
+        user_stake >= effective_req
+    };
+
+    // All correct answerers accumulate avg_participant_stake (denominator = reward_count)
+    if pool.reward_count > 0 {
+        pool.avg_participant_stake = pool
+            .avg_participant_stake
+            .saturating_add(user_stake / pool.reward_count as u64);
+    }
+
+    // Instant reward: transfer if within reward_count limit and staking requirement met
+    let reward_lamports;
+    if pool.winner_count <= pool.reward_count && stake_ok {
+        let reward = pool.reward_per_winner;
+        reward_lamports = reward;
+
+        // Transfer lamports from vault PDA to user
+        let vault_bump = ctx.bumps.vault;
+        let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
+        system_program::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.user.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            reward,
+        )?;
 
         msg!(
-            "Answer verified, no reward (winner {}, limit {})",
+            "Answer verified, reward {} lamports (winner {}/{})",
+            reward,
             pool.winner_count,
             pool.reward_count
         );
+    } else {
+        reward_lamports = 0;
+
+        if !stake_ok {
+            msg!(
+                "Answer verified, no reward (insufficient stake {})",
+                user_stake,
+            );
+        } else {
+            msg!(
+                "Answer verified, no reward (winner {}, limit {})",
+                pool.winner_count,
+                pool.reward_count
+            );
+        }
     }
 
     emit!(AnswerSubmitted {
@@ -152,6 +175,12 @@ pub const VERIFYING_KEY: Groth16Verifyingkey = Groth16Verifyingkey {
 
 #[derive(Accounts)]
 pub struct SubmitAnswer<'info> {
+    #[account(
+        seeds = [QUEST_CONFIG_SEED],
+        bump,
+    )]
+    pub game_config: Account<'info, GameConfig>,
+
     #[account(
         mut,
         seeds = [POOL_SEED],

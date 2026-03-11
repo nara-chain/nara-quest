@@ -3,6 +3,7 @@ import { Program } from "@coral-xyz/anchor";
 import { NaraQuest } from "../target/types/nara_quest";
 import { expect } from "chai";
 import {
+  ComputeBudgetProgram,
   Keypair,
   PublicKey,
   LAMPORTS_PER_SOL,
@@ -103,6 +104,11 @@ function pubkeyToCircuitInputs(pubkey: PublicKey): {
   const hiBuf = bytes.subarray(0, 16);
   const hi = BigInt("0x" + hiBuf.toString("hex")).toString();
   return { lo, hi };
+}
+
+// Sleep helper
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Convert Poseidon hash (field element) to on-chain [u8; 32] format
@@ -231,10 +237,15 @@ describe("nara-quest", () => {
       expect(pool.round.toNumber()).to.equal(0);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(0);
-      expect(pool.stakeRequirement.toNumber()).to.equal(0);
+      expect(pool.stakeHigh.toNumber()).to.equal(0);
+      expect(pool.stakeLow.toNumber()).to.equal(0);
+      expect(pool.avgParticipantStake.toNumber()).to.equal(0);
 
       expect(gameConfig.minRewardCount).to.equal(10);
       expect(gameConfig.maxRewardCount).to.equal(1000);
+      expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(100000);
+      expect(gameConfig.stakeBpsLow.toNumber()).to.equal(1000);
+      expect(gameConfig.decaySeconds.toNumber()).to.equal(2);
     });
 
     it("cannot initialize twice", async () => {
@@ -596,20 +607,21 @@ describe("nara-quest", () => {
     });
   });
 
-  describe("set_max_reward_count", () => {
-    it("authority can set max_reward_count", async () => {
+  describe("set_reward_config", () => {
+    it("authority can set reward config", async () => {
       await program.methods
-        .setMaxRewardCount(500)
+        .setRewardConfig(20, 500)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.minRewardCount).to.equal(20);
       expect(gameConfig.maxRewardCount).to.equal(500);
     });
 
     it("fails if non-authority tries to set", async () => {
       try {
         await program.methods
-          .setMaxRewardCount(100)
+          .setRewardConfig(10, 100)
           .accountsPartial({
             authority: user1.publicKey,
           })
@@ -621,41 +633,10 @@ describe("nara-quest", () => {
       }
     });
 
-    it("fails if value < min_reward_count", async () => {
+    it("fails if min is 0", async () => {
       try {
         await program.methods
-          .setMaxRewardCount(5)
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err) {
-        expect(String(err)).to.include("InvalidMaxRewardCount");
-      }
-    });
-
-    it("restores max_reward_count to 1000", async () => {
-      await program.methods
-        .setMaxRewardCount(1000)
-        .rpc();
-
-      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
-      expect(gameConfig.maxRewardCount).to.equal(1000);
-    });
-  });
-
-  describe("set_min_reward_count", () => {
-    it("authority can set min_reward_count", async () => {
-      await program.methods
-        .setMinRewardCount(20)
-        .rpc();
-
-      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
-      expect(gameConfig.minRewardCount).to.equal(20);
-    });
-
-    it("fails if value is 0", async () => {
-      try {
-        await program.methods
-          .setMinRewardCount(0)
+          .setRewardConfig(0, 1000)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -663,10 +644,10 @@ describe("nara-quest", () => {
       }
     });
 
-    it("fails if value > max_reward_count", async () => {
+    it("fails if min > max", async () => {
       try {
         await program.methods
-          .setMinRewardCount(2000)
+          .setRewardConfig(2000, 100)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -674,13 +655,95 @@ describe("nara-quest", () => {
       }
     });
 
-    it("restores min_reward_count to 10", async () => {
+    it("restores default reward config", async () => {
       await program.methods
-        .setMinRewardCount(10)
+        .setRewardConfig(10, 1000)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
       expect(gameConfig.minRewardCount).to.equal(10);
+      expect(gameConfig.maxRewardCount).to.equal(1000);
+    });
+  });
+
+  describe("set_stake_config", () => {
+    it("authority can set stake config", async () => {
+      await program.methods
+        .setStakeConfig(
+          new anchor.BN(200000), // 20x
+          new anchor.BN(500),    // 0.05x
+          new anchor.BN(10)
+        )
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(200000);
+      expect(gameConfig.stakeBpsLow.toNumber()).to.equal(500);
+      expect(gameConfig.decaySeconds.toNumber()).to.equal(10);
+    });
+
+    it("fails if non-authority tries to set", async () => {
+      try {
+        await program.methods
+          .setStakeConfig(
+            new anchor.BN(50000),
+            new anchor.BN(5000),
+            new anchor.BN(5)
+          )
+          .accountsPartial({
+            authority: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("Unauthorized");
+      }
+    });
+
+    it("fails if bps_high is 0", async () => {
+      try {
+        await program.methods
+          .setStakeConfig(
+            new anchor.BN(0),
+            new anchor.BN(5000),
+            new anchor.BN(5)
+          )
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidStakeConfig");
+      }
+    });
+
+    it("fails if decay_seconds is 0", async () => {
+      try {
+        await program.methods
+          .setStakeConfig(
+            new anchor.BN(100000),
+            new anchor.BN(1000),
+            new anchor.BN(0)
+          )
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidStakeConfig");
+      }
+    });
+
+    it("restores default stake config", async () => {
+      await program.methods
+        .setStakeConfig(
+          new anchor.BN(100000), // 10x
+          new anchor.BN(1000),   // 0.1x
+          new anchor.BN(2)
+        )
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(100000);
+      expect(gameConfig.stakeBpsLow.toNumber()).to.equal(1000);
+      expect(gameConfig.decaySeconds.toNumber()).to.equal(2);
     });
   });
 
@@ -819,6 +882,224 @@ describe("nara-quest", () => {
       } catch (err) {
         expect(String(err)).to.include("InsufficientStakeBalance");
       }
+    });
+  });
+
+  describe("staking activation (full simulation)", () => {
+    const NUM_USERS = 20;
+    const MAX_REWARD = 10;
+    const users: Keypair[] = [];
+
+    // Random stake amounts for some users (in lamports)
+    const stakeAmounts: number[] = [];
+
+    before(async () => {
+      // Set max_reward_count = 10 so staking activates after 10 winners
+      await program.methods
+        .setRewardConfig(MAX_REWARD, MAX_REWARD)
+        .rpc();
+
+      // Use default bps values; decay=2s is fine since test runs instantly
+      // (effective_req ≈ stake_high at elapsed≈0)
+
+      // Create 20 users and airdrop SOL
+      for (let i = 0; i < NUM_USERS; i++) {
+        const kp = Keypair.generate();
+        users.push(kp);
+        const sig = await provider.connection.requestAirdrop(
+          kp.publicKey,
+          2 * LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(sig);
+
+        // Random stake: 50% of users stake random amounts
+        if (i % 2 === 0) {
+          const amount = Math.floor((0.01 + Math.random() * 0.09) * LAMPORTS_PER_SOL);
+          stakeAmounts.push(amount);
+        } else {
+          stakeAmounts.push(0);
+        }
+      }
+
+      // Stake for users who have non-zero amounts
+      for (let i = 0; i < NUM_USERS; i++) {
+        if (stakeAmounts[i] > 0) {
+          await program.methods
+            .stake(new anchor.BN(stakeAmounts[i]))
+            .accountsPartial({
+              user: users[i].publicKey,
+              wsolMint: NATIVE_MINT,
+            })
+            .signers([users[i]])
+            .rpc();
+        }
+      }
+    });
+
+    it("round 1: all 20 users answer, first 10 get rewards (no staking requirement)", async () => {
+      // Create question for round 1
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Staking test round 1",
+          answerHashOnChain,
+          deadline,
+          new anchor.BN(LAMPORTS_PER_SOL),
+          DEFAULT_DIFFICULTY
+        )
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      expect(pool.rewardCount).to.equal(MAX_REWARD);
+      // First round after previous tests: stake_high/low should be 0 (no prev avg)
+      expect(pool.stakeHigh.toNumber()).to.equal(0);
+      expect(pool.stakeLow.toNumber()).to.equal(0);
+
+      // All 20 users submit concurrently with random 0~5s delays
+      // Pre-generate proofs (CPU-bound) before launching concurrent submissions
+      const proofs: { proofA: number[]; proofB: number[]; proofC: number[] }[] = [];
+      for (let i = 0; i < NUM_USERS; i++) {
+        proofs.push(await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          users[i].publicKey, pool.round.toString()
+        ));
+      }
+
+      const balancesBefore = await Promise.all(
+        users.map(u => provider.connection.getBalance(u.publicKey))
+      );
+
+      // Launch all submissions concurrently, each with independent random delay
+      await Promise.all(users.map(async (user, i) => {
+        const delay = Math.floor(Math.random() * 5000);
+        await sleep(delay);
+
+        await program.methods
+          .submitAnswer(proofs[i].proofA, proofs[i].proofB, proofs[i].proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: user.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+      }));
+
+      const balancesAfter = await Promise.all(
+        users.map(u => provider.connection.getBalance(u.publicKey))
+      );
+
+      let rewardedCount = 0;
+      for (let i = 0; i < NUM_USERS; i++) {
+        if (balancesAfter[i] > balancesBefore[i]) rewardedCount++;
+      }
+
+      expect(rewardedCount).to.equal(MAX_REWARD);
+
+      const poolAfter = await program.account.pool.fetch(poolPda);
+      expect(poolAfter.winnerCount).to.equal(NUM_USERS);
+
+      // avg_participant_stake should reflect all 20 answerers' stakes
+      // Formula: sum(user_stake / reward_count) for all answerers
+      let expectedAvg = 0;
+      for (let i = 0; i < NUM_USERS; i++) {
+        expectedAvg += Math.floor(stakeAmounts[i] / MAX_REWARD);
+      }
+      expect(poolAfter.avgParticipantStake.toNumber()).to.equal(expectedAvg);
+
+      console.log(`    Round 1: ${rewardedCount} rewarded, ${NUM_USERS - rewardedCount} unrewarded`);
+      console.log(`    avg_participant_stake = ${poolAfter.avgParticipantStake.toNumber()} lamports`);
+    });
+
+    it("round 2: staking activates, stake_high and stake_low are correctly computed", async () => {
+      // Read round 1 avg before creating next question
+      const poolR1 = await program.account.pool.fetch(poolPda);
+      const prevAvg = poolR1.avgParticipantStake.toNumber();
+
+      // Create question for round 2 (immediately, no need to wait for deadline)
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Staking test round 2",
+          answerHashOnChain,
+          deadline,
+          new anchor.BN(LAMPORTS_PER_SOL),
+          DEFAULT_DIFFICULTY
+        )
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+
+      // reward_count = min(max(20, 10), 10) = 10 (capped at max)
+      expect(pool.rewardCount).to.equal(MAX_REWARD);
+
+      // Staking parameters should be derived from prevAvg
+      const expectedHigh = Math.floor(prevAvg * 100_000 / 10_000); // 10x
+      const expectedLow = Math.floor(prevAvg * 1_000 / 10_000);    // 0.1x
+      expect(pool.stakeHigh.toNumber()).to.equal(expectedHigh);
+      expect(pool.stakeLow.toNumber()).to.equal(expectedLow);
+      expect(pool.avgParticipantStake.toNumber()).to.equal(0); // reset
+
+      console.log(`    Round 2: stake_high=${pool.stakeHigh.toNumber()}, stake_low=${pool.stakeLow.toNumber()}`);
+      console.log(`    (prevAvg=${prevAvg}, 10x=${expectedHigh}, 0.1x=${expectedLow})`);
+
+      // Pre-generate proofs
+      const proofs2: { proofA: number[]; proofB: number[]; proofC: number[] }[] = [];
+      for (let i = 0; i < NUM_USERS; i++) {
+        proofs2.push(await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          users[i].publicKey, pool.round.toString()
+        ));
+      }
+
+      const balsBefore = await Promise.all(
+        users.map(u => provider.connection.getBalance(u.publicKey))
+      );
+
+      // Launch all submissions concurrently with random 0~5s delays
+      await Promise.all(users.map(async (user, i) => {
+        const delay = Math.floor(Math.random() * 5000);
+        await sleep(delay);
+
+        await program.methods
+          .submitAnswer(proofs2[i].proofA, proofs2[i].proofB, proofs2[i].proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: user.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+      }));
+
+      const balsAfter = await Promise.all(
+        users.map(u => provider.connection.getBalance(u.publicKey))
+      );
+
+      let rewardedCount = 0;
+      for (let i = 0; i < NUM_USERS; i++) {
+        if (balsAfter[i] > balsBefore[i]) rewardedCount++;
+      }
+
+      const poolFinal = await program.account.pool.fetch(poolPda);
+      expect(poolFinal.winnerCount).to.equal(NUM_USERS);
+
+      // With staking active, users with insufficient stake should be rejected
+      console.log(`    Round 2: ${rewardedCount} rewarded out of ${NUM_USERS}`);
+      expect(rewardedCount).to.be.lessThan(MAX_REWARD);
+    });
+
+    after(async () => {
+      // Restore reward config defaults
+      await program.methods
+        .setRewardConfig(10, 1000)
+        .rpc();
     });
   });
 });

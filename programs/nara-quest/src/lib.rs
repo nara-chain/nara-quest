@@ -44,12 +44,8 @@ pub mod nara_quest {
         instructions::transfer_authority::handler_transfer_authority(ctx, new_authority)
     }
 
-    pub fn set_min_reward_count(ctx: Context<SetMinRewardCount>, min_reward_count: u32) -> Result<()> {
-        instructions::set_min_reward_count::handler_set_min_reward_count(ctx, min_reward_count)
-    }
-
-    pub fn set_max_reward_count(ctx: Context<SetMaxRewardCount>, max_reward_count: u32) -> Result<()> {
-        instructions::set_max_reward_count::handler_set_max_reward_count(ctx, max_reward_count)
+    pub fn set_reward_config(ctx: Context<SetRewardConfig>, min_reward_count: u32, max_reward_count: u32) -> Result<()> {
+        instructions::set_reward_config::handler_set_reward_config(ctx, min_reward_count, max_reward_count)
     }
 
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
@@ -58,5 +54,14 @@ pub mod nara_quest {
 
     pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
         instructions::unstake::handler_unstake(ctx, amount)
+    }
+
+    pub fn set_stake_config(
+        ctx: Context<SetStakeConfig>,
+        bps_high: u64,
+        bps_low: u64,
+        decay_seconds: i64,
+    ) -> Result<()> {
+        instructions::set_stake_config::handler_set_stake_config(ctx, bps_high, bps_low, decay_seconds)
     }
 }

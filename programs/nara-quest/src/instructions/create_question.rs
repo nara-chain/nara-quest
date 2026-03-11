@@ -42,10 +42,10 @@ pub fn handler_create_question(
 
     // Calculate reward_count: min(max(previous_winner_count, min_reward_count), max_reward_count)
     let pool = &mut ctx.accounts.pool;
-    let min_reward_count = ctx.accounts.game_config.min_reward_count;
-    let max_reward_count = ctx.accounts.game_config.max_reward_count;
+    let game_config = &ctx.accounts.game_config;
+    let min_reward_count = game_config.min_reward_count;
+    let max_reward_count = game_config.max_reward_count;
     let prev_winner_count = pool.winner_count;
-    let prev_min_winner_stake = pool.min_winner_stake;
 
     let uncapped = if prev_winner_count >= min_reward_count {
         prev_winner_count
@@ -58,17 +58,12 @@ pub fn handler_create_question(
         uncapped
     };
 
-    // Calculate stake_requirement for this round
-    let stake_requirement = if prev_winner_count >= max_reward_count
-        && prev_min_winner_stake != u64::MAX
-        && prev_min_winner_stake > 0
-    {
-        prev_min_winner_stake
-    } else {
-        0
-    };
-
     let reward_per_winner = total_reward / reward_count as u64;
+
+    // Calculate staking parameters from previous round's avg_participant_stake (bps / 10000)
+    let prev_avg = pool.avg_participant_stake;
+    let stake_high = prev_avg.saturating_mul(game_config.stake_bps_high) / BPS_BASE;
+    let stake_low = prev_avg.saturating_mul(game_config.stake_bps_low) / BPS_BASE;
 
     // Update pool state
     pool.round += 1;
@@ -80,8 +75,10 @@ pub fn handler_create_question(
     pool.reward_per_winner = reward_per_winner;
     pool.winner_count = 0;
     pool.difficulty = difficulty;
-    pool.stake_requirement = stake_requirement;
-    pool.min_winner_stake = u64::MAX;
+    pool.created_at = clock.unix_timestamp;
+    pool.stake_high = stake_high;
+    pool.stake_low = stake_low;
+    pool.avg_participant_stake = 0;
 
     msg!(
         "Quest created (round {}, reward_count={}, reward_per_winner={})",
