@@ -60,8 +60,8 @@ pub mod nara_quest {
         ctx: Context<SetStakeConfig>,
         bps_high: u64,
         bps_low: u64,
-        decay_seconds: i64,
+        decay_ms: i64,
     ) -> Result<()> {
-        instructions::set_stake_config::handler_set_stake_config(ctx, bps_high, bps_low, decay_seconds)
+        instructions::set_stake_config::handler_set_stake_config(ctx, bps_high, bps_low, decay_ms)
     }
 }

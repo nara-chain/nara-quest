@@ -75,14 +75,14 @@ pub fn handler_submit_answer(
         true // not at capacity, no staking required
     } else {
         // At capacity: calculate dynamic stake requirement (parabolic decay)
-        let elapsed = clock.unix_timestamp.saturating_sub(pool.created_at);
-        let decay = game_config.decay_seconds;
+        let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
+        let decay = game_config.decay_ms;
 
-        let effective_req = if decay <= 0 || elapsed >= decay {
+        let effective_req = if decay <= 0 || elapsed_ms >= decay {
             pool.stake_low
         } else {
             let range = pool.stake_high.saturating_sub(pool.stake_low);
-            let elapsed_u = elapsed as u64;
+            let elapsed_u = elapsed_ms as u64;
             let decay_u = decay as u64;
             // Convex parabola: high - (high - low) × (elapsed/decay)²
             pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))

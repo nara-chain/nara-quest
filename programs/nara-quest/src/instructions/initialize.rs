@@ -10,7 +10,7 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     game_config.max_reward_count = DEFAULT_MAX_REWARD_COUNT;
     game_config.stake_bps_high = DEFAULT_STAKE_BPS_HIGH;
     game_config.stake_bps_low = DEFAULT_STAKE_BPS_LOW;
-    game_config.decay_seconds = DEFAULT_DECAY_SECONDS;
+    game_config.decay_ms = DEFAULT_DECAY_MS;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;

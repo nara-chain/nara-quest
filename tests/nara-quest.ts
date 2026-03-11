@@ -245,7 +245,7 @@ describe("nara-quest", () => {
       expect(gameConfig.maxRewardCount).to.equal(1000);
       expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(100000);
       expect(gameConfig.stakeBpsLow.toNumber()).to.equal(1000);
-      expect(gameConfig.decaySeconds.toNumber()).to.equal(2);
+      expect(gameConfig.decayMs.toNumber()).to.equal(2000);
     });
 
     it("cannot initialize twice", async () => {
@@ -672,14 +672,14 @@ describe("nara-quest", () => {
         .setStakeConfig(
           new anchor.BN(200000), // 20x
           new anchor.BN(500),    // 0.05x
-          new anchor.BN(10)
+          new anchor.BN(10000)
         )
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
       expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(200000);
       expect(gameConfig.stakeBpsLow.toNumber()).to.equal(500);
-      expect(gameConfig.decaySeconds.toNumber()).to.equal(10);
+      expect(gameConfig.decayMs.toNumber()).to.equal(10000);
     });
 
     it("fails if non-authority tries to set", async () => {
@@ -716,7 +716,7 @@ describe("nara-quest", () => {
       }
     });
 
-    it("fails if decay_seconds is 0", async () => {
+    it("fails if decay_ms is 0", async () => {
       try {
         await program.methods
           .setStakeConfig(
@@ -736,14 +736,14 @@ describe("nara-quest", () => {
         .setStakeConfig(
           new anchor.BN(100000), // 10x
           new anchor.BN(1000),   // 0.1x
-          new anchor.BN(2)
+          new anchor.BN(2000)
         )
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
       expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(100000);
       expect(gameConfig.stakeBpsLow.toNumber()).to.equal(1000);
-      expect(gameConfig.decaySeconds.toNumber()).to.equal(2);
+      expect(gameConfig.decayMs.toNumber()).to.equal(2000);
     });
   });
 

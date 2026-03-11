@@ -21,7 +21,7 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 - **Replay Protection**: Proofs are bound to the agent's pubkey and the current round number, preventing cross-agent and cross-round replay. A per-user `WinnerRecord` PDA enforces one claim per round.
 - **Instant Rewards**: Agents receive NARA immediately upon successful proof verification.
 - **Dynamic Reward Pool**: `reward_count = min(max(previous_round_winners, 10), max_reward_count)`, unspent rewards carry over.
-- **Dynamic Staking**: When `reward_count` reaches `max_reward_count`, a staking requirement activates. The requirement uses parabolic (convex quadratic) time-decay from `avg × stake_bps_high / 10000` down to `avg × stake_bps_low / 10000` over `decay_seconds`, where `avg` is the previous round's average participant stake.
+- **Dynamic Staking**: When `reward_count` reaches `max_reward_count`, a staking requirement activates. The requirement uses parabolic (convex quadratic) time-decay from `avg × stake_bps_high / 10000` down to `avg × stake_bps_low / 10000` over `decay_ms`, where `avg` is the previous round's average participant stake.
 - **Difficulty Levels**: Each quest carries a `difficulty` rating, enabling adaptive challenge scaling.
 - **Sponsored Submissions**: A separate `payer` account covers gas and rent, allowing zero-balance agents to participate.
 
@@ -91,7 +91,7 @@ nara-quest/
 | `submit_answer(proof_a, proof_b, proof_c, agent, model)` | Submit Groth16 proof with agent attribution; instant reward on success |
 | `transfer_authority(new_authority)` | Transfer admin rights |
 | `set_reward_config(min_reward_count, max_reward_count)` | Set min/max reward winner slots (admin only, 0 < min <= max) |
-| `set_stake_config(bps_high, bps_low, decay_seconds)` | Set staking decay parameters in bps (admin only, all > 0) |
+| `set_stake_config(bps_high, bps_low, decay_ms)` | Set staking decay parameters in bps (admin only, all > 0) |
 | `stake(amount)` | Stake SOL as WSOL into user's stake ATA; accumulates across calls |
 | `unstake(amount)` | Withdraw staked WSOL → SOL; requires round advance or deadline passed |
 
@@ -99,7 +99,7 @@ nara-quest/
 
 | Account | Seeds | Description |
 |---|---|---|
-| `GameConfig` | `["quest_config"]` | Authority, min/max_reward_count, stake_bps_high/low, decay_seconds |
+| `GameConfig` | `["quest_config"]` | Authority, min/max_reward_count, stake_bps_high/low, decay_ms |
 | `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, stake_high/low, avg_participant_stake) |
 | `Vault` | `["quest_vault"]` | System account holding reward NARA |
 | `WinnerRecord` | `["quest_winner", user_pubkey]` | Per-agent claim record (stores last answered round) |

@@ -8,23 +8,23 @@ pub fn handler_set_stake_config(
     ctx: Context<SetStakeConfig>,
     bps_high: u64,
     bps_low: u64,
-    decay_seconds: i64,
+    decay_ms: i64,
 ) -> Result<()> {
     require!(
-        bps_high > 0 && bps_low > 0 && decay_seconds > 0,
+        bps_high > 0 && bps_low > 0 && decay_ms > 0,
         QuestError::InvalidStakeConfig
     );
 
     let game_config = &mut ctx.accounts.game_config;
     game_config.stake_bps_high = bps_high;
     game_config.stake_bps_low = bps_low;
-    game_config.decay_seconds = decay_seconds;
+    game_config.decay_ms = decay_ms;
 
     msg!(
-        "Stake config updated: bps_high={}, bps_low={}, decay={}s",
+        "Stake config updated: bps_high={}, bps_low={}, decay={}ms",
         bps_high,
         bps_low,
-        decay_seconds
+        decay_ms
     );
     Ok(())
 }
