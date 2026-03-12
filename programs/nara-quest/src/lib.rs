@@ -23,10 +23,9 @@ pub mod nara_quest {
         question: String,
         answer_hash: [u8; 32],
         deadline: i64,
-        reward_amount: u64,
         difficulty: u32,
     ) -> Result<()> {
-        instructions::create_question::handler_create_question(ctx, question, answer_hash, deadline, reward_amount, difficulty)
+        instructions::create_question::handler_create_question(ctx, question, answer_hash, deadline, difficulty)
     }
 
     pub fn submit_answer(
@@ -63,5 +62,27 @@ pub mod nara_quest {
         decay_ms: i64,
     ) -> Result<()> {
         instructions::set_stake_config::handler_set_stake_config(ctx, bps_high, bps_low, decay_ms)
+    }
+
+    pub fn set_quest_authority(
+        ctx: Context<SetQuestAuthority>,
+        new_quest_authority: Pubkey,
+    ) -> Result<()> {
+        instructions::set_quest_authority::handler_set_quest_authority(ctx, new_quest_authority)
+    }
+
+    pub fn set_reward_per_share(
+        ctx: Context<SetRewardPerShare>,
+        reward_per_share: u64,
+        extra_reward: u64,
+    ) -> Result<()> {
+        instructions::set_reward_per_share::handler_set_reward_per_share(ctx, reward_per_share, extra_reward)
+    }
+
+    pub fn set_quest_interval(
+        ctx: Context<SetQuestInterval>,
+        min_quest_interval: i64,
+    ) -> Result<()> {
+        instructions::set_quest_interval::handler_set_quest_interval(ctx, min_quest_interval)
     }
 }

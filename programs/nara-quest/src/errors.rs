@@ -40,4 +40,13 @@ pub enum QuestError {
 
     #[msg("Stake does not meet dynamic requirement")]
     InsufficientStake,
+
+    #[msg("Quest interval too short")]
+    QuestIntervalTooShort,
+
+    #[msg("Insufficient treasury balance")]
+    InsufficientTreasury,
+
+    #[msg("Invalid reward config: reward_per_share and extra_reward cannot both be 0")]
+    InvalidRewardPerShare,
 }

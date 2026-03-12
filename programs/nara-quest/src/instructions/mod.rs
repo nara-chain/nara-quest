@@ -4,6 +4,9 @@ pub mod submit_answer;
 pub mod transfer_authority;
 pub mod set_reward_config;
 pub mod set_stake_config;
+pub mod set_quest_authority;
+pub mod set_reward_per_share;
+pub mod set_quest_interval;
 pub mod stake;
 pub mod unstake;
 
@@ -13,5 +16,8 @@ pub use submit_answer::*;
 pub use transfer_authority::*;
 pub use set_reward_config::*;
 pub use set_stake_config::*;
+pub use set_quest_authority::*;
+pub use set_reward_per_share::*;
+pub use set_quest_interval::*;
 pub use stake::*;
 pub use unstake::*;

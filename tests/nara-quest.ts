@@ -161,6 +161,7 @@ describe("nara-quest", () => {
   // PDAs
   let gameConfigPda: PublicKey;
   let poolPda: PublicKey;
+  let treasuryPda: PublicKey;
 
   // sponsor: pays gas and rent for submit on behalf of users
   const sponsor = Keypair.generate();
@@ -168,6 +169,9 @@ describe("nara-quest", () => {
   // user1 and user2 for testing
   const user1 = Keypair.generate();
   const user2 = Keypair.generate();
+
+  // quest_authority keypair for testing
+  const questAuthority = Keypair.generate();
 
   // ZK dependencies (loaded dynamically)
   let snarkjs: SnarkJS;
@@ -188,6 +192,10 @@ describe("nara-quest", () => {
   const TEST_AGENT = "test-agent-v1";
   const TEST_MODEL = "claude-sonnet-4-6";
 
+  // Reward config for tests
+  const REWARD_PER_SHARE = 0.1 * LAMPORTS_PER_SOL; // 0.1 SOL per share
+  const EXTRA_REWARD = 0;
+
   before(async () => {
     snarkjs = await import("snarkjs") as unknown as SnarkJS;
     const circomlibjs = await import("circomlibjs");
@@ -205,6 +213,10 @@ describe("nara-quest", () => {
       [Buffer.from("quest_pool")],
       program.programId
     );
+    [treasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("quest_treasury")],
+      program.programId
+    );
 
     // sponsor pays gas/rent for submit
     const sponsorSig = await provider.connection.requestAirdrop(
@@ -220,8 +232,27 @@ describe("nara-quest", () => {
     );
     await provider.connection.confirmTransaction(user1Sig);
 
+    // quest_authority needs SOL for gas
+    const qaSig = await provider.connection.requestAirdrop(
+      questAuthority.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(qaSig);
+
     // user2 has zero SOL — fully sponsored
   });
+
+  // Helper: fund treasury PDA with SOL
+  async function fundTreasury(amount: number) {
+    const tx = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: authority.publicKey,
+        toPubkey: treasuryPda,
+        lamports: amount,
+      })
+    );
+    await provider.sendAndConfirm(tx);
+  }
 
   describe("initialize", () => {
     it("initializes game config and pool", async () => {
@@ -233,6 +264,16 @@ describe("nara-quest", () => {
       expect(gameConfig.authority.toBase58()).to.equal(
         authority.publicKey.toBase58()
       );
+      expect(gameConfig.questAuthority.toBase58()).to.equal(
+        authority.publicKey.toBase58()
+      );
+      expect(gameConfig.treasury.toBase58()).to.equal(
+        treasuryPda.toBase58()
+      );
+      expect(gameConfig.minQuestInterval.toNumber()).to.equal(30);
+      expect(gameConfig.rewardPerShare.toNumber()).to.equal(0);
+      expect(gameConfig.extraReward.toNumber()).to.equal(0);
+
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.round.toNumber()).to.equal(0);
       expect(pool.winnerCount).to.equal(0);
@@ -242,7 +283,7 @@ describe("nara-quest", () => {
       expect(pool.avgParticipantStake.toNumber()).to.equal(0);
 
       expect(gameConfig.minRewardCount).to.equal(10);
-      expect(gameConfig.maxRewardCount).to.equal(1000);
+      expect(gameConfig.maxRewardCount).to.equal(16384);
       expect(gameConfig.stakeBpsHigh.toNumber()).to.equal(100000);
       expect(gameConfig.stakeBpsLow.toNumber()).to.equal(1000);
       expect(gameConfig.decayMs.toNumber()).to.equal(2000);
@@ -260,9 +301,105 @@ describe("nara-quest", () => {
     });
   });
 
+  describe("set_reward_per_share", () => {
+    it("authority can set reward per share", async () => {
+      await program.methods
+        .setRewardPerShare(
+          new anchor.BN(REWARD_PER_SHARE),
+          new anchor.BN(EXTRA_REWARD)
+        )
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.rewardPerShare.toNumber()).to.equal(REWARD_PER_SHARE);
+      expect(gameConfig.extraReward.toNumber()).to.equal(EXTRA_REWARD);
+    });
+
+    it("fails if both reward_per_share and extra_reward are 0", async () => {
+      try {
+        await program.methods
+          .setRewardPerShare(new anchor.BN(0), new anchor.BN(0))
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InvalidRewardPerShare");
+      }
+    });
+
+    it("fails if non-authority tries to set", async () => {
+      try {
+        await program.methods
+          .setRewardPerShare(
+            new anchor.BN(LAMPORTS_PER_SOL),
+            new anchor.BN(0)
+          )
+          .accountsPartial({
+            authority: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("Unauthorized");
+      }
+    });
+  });
+
+  describe("set_quest_authority", () => {
+    it("authority can set quest_authority", async () => {
+      await program.methods
+        .setQuestAuthority(questAuthority.publicKey)
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.questAuthority.toBase58()).to.equal(
+        questAuthority.publicKey.toBase58()
+      );
+    });
+
+    it("fails if non-authority tries to set quest_authority", async () => {
+      try {
+        await program.methods
+          .setQuestAuthority(user1.publicKey)
+          .accountsPartial({
+            authority: user1.publicKey,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("Unauthorized");
+      }
+    });
+  });
+
+  describe("set_quest_interval", () => {
+    it("authority can set quest interval", async () => {
+      await program.methods
+        .setQuestInterval(new anchor.BN(5))
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.minQuestInterval.toNumber()).to.equal(5);
+    });
+
+    it("can set interval to 0 (disable)", async () => {
+      await program.methods
+        .setQuestInterval(new anchor.BN(0))
+        .rpc();
+
+      const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
+      expect(gameConfig.minQuestInterval.toNumber()).to.equal(0);
+    });
+  });
+
   describe("create_question", () => {
+    before(async () => {
+      // Fund treasury with enough SOL for tests
+      await fundTreasury(10 * LAMPORTS_PER_SOL);
+    });
+
     it("creates first question with default reward_count=10", async () => {
-      const rewardAmount = new anchor.BN(1 * LAMPORTS_PER_SOL);
       const deadline = new anchor.BN(
         Math.floor(Date.now() / 1000) + DEADLINE_SECONDS
       );
@@ -272,9 +409,11 @@ describe("nara-quest", () => {
           "What is the answer to life?",
           answerHashOnChain,
           deadline,
-          rewardAmount,
           DEFAULT_DIFFICULTY
         )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
@@ -283,14 +422,33 @@ describe("nara-quest", () => {
       expect(pool.difficulty).to.equal(DEFAULT_DIFFICULTY);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(10);
+      // total_reward = reward_per_share * reward_count + extra_reward
+      // = 0.1 SOL * 10 + 0 = 1 SOL
       expect(pool.rewardAmount.toNumber()).to.equal(1 * LAMPORTS_PER_SOL);
-      expect(pool.rewardPerWinner.toNumber()).to.equal(
-        Math.floor(1 * LAMPORTS_PER_SOL / 10)
-      );
+      expect(pool.rewardPerWinner.toNumber()).to.equal(REWARD_PER_SHARE);
     });
 
-    it("fails if non-authority tries to create question", async () => {
-      const rewardAmount = new anchor.BN(1 * LAMPORTS_PER_SOL);
+    it("quest_authority can create question", async () => {
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+
+      await program.methods
+        .createQuestion(
+          "Quest authority question",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: questAuthority.publicKey,
+        })
+        .signers([questAuthority])
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      expect(pool.question).to.equal("Quest authority question");
+    });
+
+    it("fails if non-authority and non-quest_authority tries to create question", async () => {
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
 
       try {
@@ -299,22 +457,20 @@ describe("nara-quest", () => {
             "Unauthorized question",
             answerHashOnChain,
             deadline,
-            rewardAmount,
             DEFAULT_DIFFICULTY
           )
           .accountsPartial({
-            authority: user1.publicKey,
+            caller: user1.publicKey,
           })
           .signers([user1])
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        // Expected: unauthorized
+        expect(String(err)).to.include("Unauthorized");
       }
     });
 
     it("fails if deadline is in the past", async () => {
-      const rewardAmount = new anchor.BN(1 * LAMPORTS_PER_SOL);
       const pastDeadline = new anchor.BN(Math.floor(Date.now() / 1000) - 100);
 
       try {
@@ -323,9 +479,11 @@ describe("nara-quest", () => {
             "Past deadline question",
             answerHashOnChain,
             pastDeadline,
-            rewardAmount,
             DEFAULT_DIFFICULTY
           )
+          .accountsPartial({
+            caller: authority.publicKey,
+          })
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -333,27 +491,74 @@ describe("nara-quest", () => {
       }
     });
 
-    it("fails if reward amount is zero", async () => {
+    it("quest_authority respects min interval", async () => {
+      // Set a 60-second interval
+      await program.methods
+        .setQuestInterval(new anchor.BN(60))
+        .rpc();
+
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
 
       try {
         await program.methods
           .createQuestion(
-            "Zero reward question",
+            "Too soon question",
             answerHashOnChain,
             deadline,
-            new anchor.BN(0),
             DEFAULT_DIFFICULTY
           )
+          .accountsPartial({
+            caller: questAuthority.publicKey,
+          })
+          .signers([questAuthority])
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
-        expect(String(err)).to.include("InsufficientReward");
+        expect(String(err)).to.include("QuestIntervalTooShort");
       }
+
+      // Admin is exempt from interval check
+      await program.methods
+        .createQuestion(
+          "Admin bypasses interval",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      expect(pool.question).to.equal("Admin bypasses interval");
+
+      // Reset interval to 0
+      await program.methods
+        .setQuestInterval(new anchor.BN(0))
+        .rpc();
     });
   });
 
   describe("submit_answer (instant reward)", () => {
+    before(async () => {
+      // Create a fresh question for submit tests
+      const deadline = new anchor.BN(
+        Math.floor(Date.now() / 1000) + DEADLINE_SECONDS
+      );
+      await program.methods
+        .createQuestion(
+          "Submit test question",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
+        .rpc();
+    });
+
     it("sponsor submits valid ZK proof on behalf of user1 and user1 receives instant reward", async () => {
       const pool = await program.account.pool.fetch(poolPda);
       const { proofA, proofB, proofC } = await generateProof(
@@ -479,21 +684,21 @@ describe("nara-quest", () => {
       const poolBefore = await program.account.pool.fetch(poolPda);
       expect(poolBefore.winnerCount).to.equal(2);
 
-      const rewardAmount = new anchor.BN(0.5 * LAMPORTS_PER_SOL);
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
 
       await program.methods
         .createQuestion(
-          "New question after round 1",
+          "New question after round",
           answerHashOnChain,
           deadline,
-          rewardAmount,
           DEFAULT_DIFFICULTY
         )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      expect(pool.round.toNumber()).to.equal(2);
       expect(pool.winnerCount).to.equal(0);
       expect(pool.rewardCount).to.equal(10); // max(2, 10) = 10
     });
@@ -522,7 +727,7 @@ describe("nara-quest", () => {
 
       const recordPda = winnerRecordPda(program.programId, user1.publicKey);
       const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
-      expect(winnerRecord.round.toNumber()).to.equal(2);
+      expect(winnerRecord.round.toNumber()).to.equal(pool.round.toNumber());
     });
   });
 
@@ -538,7 +743,16 @@ describe("nara-quest", () => {
       );
     });
 
-    it("old authority can no longer create questions", async () => {
+    it("old authority can no longer create questions (unless it's quest_authority)", async () => {
+      // Set quest_authority to someone else so old authority can't use it
+      await program.methods
+        .setQuestAuthority(questAuthority.publicKey)
+        .accountsPartial({
+          authority: user1.publicKey,
+        })
+        .signers([user1])
+        .rpc();
+
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
       try {
         await program.methods
@@ -546,9 +760,11 @@ describe("nara-quest", () => {
             "Should fail",
             answerHashOnChain,
             deadline,
-            new anchor.BN(LAMPORTS_PER_SOL),
             DEFAULT_DIFFICULTY
           )
+          .accountsPartial({
+            caller: authority.publicKey,
+          })
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -563,11 +779,10 @@ describe("nara-quest", () => {
           "New authority question",
           answerHashOnChain,
           deadline,
-          new anchor.BN(LAMPORTS_PER_SOL),
           DEFAULT_DIFFICULTY
         )
         .accountsPartial({
-          authority: user1.publicKey,
+          caller: user1.publicKey,
         })
         .signers([user1])
         .rpc();
@@ -844,9 +1059,11 @@ describe("nara-quest", () => {
           "Round advance for unstake test",
           answerHashOnChain,
           deadline,
-          new anchor.BN(LAMPORTS_PER_SOL),
           DEFAULT_DIFFICULTY
         )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
         .rpc();
 
       const balanceBefore = await provider.connection.getBalance(user1.publicKey);
@@ -882,6 +1099,44 @@ describe("nara-quest", () => {
       } catch (err) {
         expect(String(err)).to.include("InsufficientStakeBalance");
       }
+    });
+  });
+
+  describe("treasury insufficient balance", () => {
+    it("fails if treasury cannot cover deficit", async () => {
+      // Set reward_per_share very high to exceed treasury
+      await program.methods
+        .setRewardPerShare(
+          new anchor.BN(100 * LAMPORTS_PER_SOL), // 100 SOL per share
+          new anchor.BN(0)
+        )
+        .rpc();
+
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      try {
+        await program.methods
+          .createQuestion(
+            "Should fail - insufficient treasury",
+            answerHashOnChain,
+            deadline,
+            DEFAULT_DIFFICULTY
+          )
+          .accountsPartial({
+            caller: authority.publicKey,
+          })
+          .rpc();
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(String(err)).to.include("InsufficientTreasury");
+      }
+
+      // Restore reward config
+      await program.methods
+        .setRewardPerShare(
+          new anchor.BN(REWARD_PER_SHARE),
+          new anchor.BN(EXTRA_REWARD)
+        )
+        .rpc();
     });
   });
 
@@ -944,9 +1199,11 @@ describe("nara-quest", () => {
           "Staking test round 1",
           answerHashOnChain,
           deadline,
-          new anchor.BN(LAMPORTS_PER_SOL),
           DEFAULT_DIFFICULTY
         )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
@@ -1026,9 +1283,11 @@ describe("nara-quest", () => {
           "Staking test round 2",
           answerHashOnChain,
           deadline,
-          new anchor.BN(LAMPORTS_PER_SOL),
           DEFAULT_DIFFICULTY
         )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);

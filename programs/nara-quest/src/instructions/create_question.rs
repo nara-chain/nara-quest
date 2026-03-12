@@ -10,39 +10,36 @@ pub fn handler_create_question(
     question: String,
     answer_hash: [u8; 32],
     deadline: i64,
-    reward_amount: u64,
     difficulty: u32,
 ) -> Result<()> {
     require!(question.len() <= MAX_QUESTION_LEN, QuestError::QuestionTooLong);
-    require!(reward_amount > 0, QuestError::InsufficientReward);
 
     let clock = Clock::get()?;
     require!(deadline > clock.unix_timestamp, QuestError::InvalidDeadline);
 
-    // Read vault leftover from previous round (exclude rent-exempt minimum)
-    let vault_info = ctx.accounts.vault.to_account_info();
-    let rent = Rent::get()?;
-    let vault_rent = rent.minimum_balance(vault_info.data_len());
-    let vault_leftover = vault_info.lamports().saturating_sub(vault_rent);
-
-    // Transfer reward from authority to vault PDA
-    system_program::transfer(
-        CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.authority.to_account_info(),
-                to: ctx.accounts.vault.to_account_info(),
-            },
-        ),
-        reward_amount,
-    )?;
-
-    // Total reward = new deposit + leftover from previous round
-    let total_reward = reward_amount + vault_leftover;
-
-    // Calculate reward_count: min(max(previous_winner_count, min_reward_count), max_reward_count)
-    let pool = &mut ctx.accounts.pool;
+    // Dual-role authority check: caller must be authority or quest_authority
     let game_config = &ctx.accounts.game_config;
+    let caller_key = ctx.accounts.caller.key();
+    let is_admin = caller_key == game_config.authority;
+    let is_quest_authority = game_config.quest_authority != Pubkey::default()
+        && caller_key == game_config.quest_authority;
+
+    require!(is_admin || is_quest_authority, QuestError::Unauthorized);
+
+    // Minimum interval check: only quest_authority is restricted, admin is exempt
+    if !is_admin && game_config.min_quest_interval > 0 {
+        let pool = &ctx.accounts.pool;
+        if pool.round > 0 {
+            let elapsed = clock.unix_timestamp.saturating_sub(pool.created_at);
+            require!(
+                elapsed >= game_config.min_quest_interval,
+                QuestError::QuestIntervalTooShort
+            );
+        }
+    }
+
+    // Calculate reward_count: clamp(prev_winner_count, min_reward_count, max_reward_count)
+    let pool = &mut ctx.accounts.pool;
     let min_reward_count = game_config.min_reward_count;
     let max_reward_count = game_config.max_reward_count;
     let prev_winner_count = pool.winner_count;
@@ -58,9 +55,54 @@ pub fn handler_create_question(
         uncapped
     };
 
-    let reward_per_winner = total_reward / reward_count as u64;
+    // Calculate total_reward from config: reward_per_share * reward_count + extra_reward
+    let reward_per_share = game_config.reward_per_share;
+    let extra_reward = game_config.extra_reward;
+    let total_reward = reward_per_share
+        .checked_mul(reward_count as u64)
+        .unwrap()
+        .checked_add(extra_reward)
+        .unwrap();
 
-    // Calculate staking parameters from previous round's avg_participant_stake (bps / 10000)
+    require!(total_reward > 0, QuestError::InsufficientReward);
+
+    // Check vault balance, top up from treasury if needed
+    let vault_info = ctx.accounts.vault.to_account_info();
+    let rent = Rent::get()?;
+    let vault_rent = rent.minimum_balance(vault_info.data_len());
+    let vault_balance = vault_info.lamports().saturating_sub(vault_rent);
+
+    if vault_balance < total_reward {
+        let deficit = total_reward - vault_balance;
+
+        // Check treasury balance
+        let treasury_info = ctx.accounts.treasury.to_account_info();
+        let treasury_rent = rent.minimum_balance(treasury_info.data_len());
+        let treasury_available = treasury_info.lamports().saturating_sub(treasury_rent);
+        require!(treasury_available >= deficit, QuestError::InsufficientTreasury);
+
+        // Transfer from treasury PDA to vault PDA
+        let treasury_bump = ctx.bumps.treasury;
+        let treasury_signer_seeds: &[&[&[u8]]] = &[&[TREASURY_SEED, &[treasury_bump]]];
+        system_program::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.treasury.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                },
+                treasury_signer_seeds,
+            ),
+            deficit,
+        )?;
+    }
+
+    // reward_per_winner = reward_per_share + extra_reward / reward_count
+    // Integer division remainder stays in vault for next round
+    let extra_per_winner = extra_reward / reward_count as u64;
+    let reward_per_winner = reward_per_share + extra_per_winner;
+
+    // Calculate staking parameters from previous round's avg_participant_stake
     let prev_avg = pool.avg_participant_stake;
     let stake_high = prev_avg.saturating_mul(game_config.stake_bps_high) / BPS_BASE;
     let stake_low = prev_avg.saturating_mul(game_config.stake_bps_low) / BPS_BASE;
@@ -92,7 +134,6 @@ pub fn handler_create_question(
 #[derive(Accounts)]
 pub struct CreateQuestion<'info> {
     #[account(
-        mut,
         seeds = [QUEST_CONFIG_SEED],
         bump,
     )]
@@ -113,11 +154,17 @@ pub struct CreateQuestion<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
+    /// CHECK: Treasury PDA holding reserves (system-owned)
     #[account(
         mut,
-        constraint = authority.key() == game_config.authority @ QuestError::Unauthorized,
+        seeds = [TREASURY_SEED],
+        bump,
     )]
-    pub authority: Signer<'info>,
+    pub treasury: UncheckedAccount<'info>,
+
+    /// Caller: either authority or quest_authority
+    #[account(mut)]
+    pub caller: Signer<'info>,
 
     pub system_program: Program<'info, System>,
 }

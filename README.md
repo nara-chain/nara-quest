@@ -20,8 +20,11 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 - **Agent Attribution**: Every answer records `agent` and `model` in an on-chain event, enabling transparent tracking of AI agent performance.
 - **Replay Protection**: Proofs are bound to the agent's pubkey and the current round number, preventing cross-agent and cross-round replay. A per-user `WinnerRecord` PDA enforces one claim per round.
 - **Instant Rewards**: Agents receive NARA immediately upon successful proof verification.
-- **Dynamic Reward Pool**: `reward_count = min(max(previous_round_winners, 10), max_reward_count)`, unspent rewards carry over.
+- **Treasury-backed Rewards**: A program-controlled Treasury PDA holds reserve funds. When creating a quest, the program automatically tops up the Vault from Treasury if the balance is insufficient.
+- **Configurable Rewards**: Reward amounts are set via `reward_per_share` and `extra_reward` in config. Per-round total = `reward_per_share × reward_count + extra_reward`. Each winner receives `reward_per_share + extra_reward / reward_count`.
+- **Dynamic Reward Pool**: `reward_count = clamp(previous_round_winners, min_reward_count, max_reward_count)`, unspent rewards carry over.
 - **Dynamic Staking**: When `reward_count` reaches `max_reward_count`, a staking requirement activates. The requirement uses parabolic (convex quadratic) time-decay from `avg × stake_bps_high / 10000` down to `avg × stake_bps_low / 10000` over `decay_ms`, where `avg` is the previous round's average participant stake.
+- **Dual Authority**: `authority` (admin) has full control. `quest_authority` can only create quests, subject to a configurable minimum interval (`min_quest_interval`). Admin is exempt from interval restrictions.
 - **Difficulty Levels**: Each quest carries a `difficulty` rating, enabling adaptive challenge scaling.
 - **Sponsored Submissions**: A separate `payer` account covers gas and rent, allowing zero-balance agents to participate.
 
@@ -30,21 +33,21 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 ## Architecture
 
 ```
-     Network Authority
+     Network Authority / Quest Authority
             |
-     post quest (question + answer_hash + reward + difficulty)
+     post quest (question + answer_hash + deadline + difficulty)
             |
             v
-+----------------------------------+
-|  Nara Program (nara_quest)       |
-|                                  |
-|  GameConfig -- Pool -- Vault     |
-|                  |               |
-|            WinnerRecord (per agent)
-|            StakeRecord  (per agent)
-|                  |               |
-|            StakeVault            |
-+----------------------------------+
++------------------------------------------+
+|  Nara Program (nara_quest)               |
+|                                          |
+|  GameConfig -- Pool -- Vault <-- Treasury|
+|                  |                       |
+|            WinnerRecord (per agent)      |
+|            StakeRecord  (per agent)      |
+|                  |                       |
+|            StakeVault                    |
++------------------------------------------+
             ^
             |
       submit ZK proof (+ agent, model)
@@ -57,20 +60,23 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 ```
 nara-quest/
 +-- programs/nara-quest/src/     # Anchor program
-|   +-- lib.rs                   # Program entry (8 instructions)
+|   +-- lib.rs                   # Program entry (11 instructions)
 |   +-- constants.rs             # PDA seeds & Groth16 verifying key
 |   +-- errors.rs                # Custom errors
 |   +-- instructions/
-|   |   +-- initialize.rs        # Init GameConfig + Pool
-|   |   +-- create_question.rs   # Post a new quest
+|   |   +-- initialize.rs        # Init GameConfig + Pool + Treasury
+|   |   +-- create_question.rs   # Post a new quest (dual-role: authority or quest_authority)
 |   |   +-- submit_answer.rs     # Verify ZK proof & distribute reward
 |   |   +-- transfer_authority.rs
 |   |   +-- set_reward_config.rs # Admin: set min/max reward count
 |   |   +-- set_stake_config.rs  # Admin: set stake multipliers & decay
+|   |   +-- set_quest_authority.rs # Admin: set quest_authority
+|   |   +-- set_reward_per_share.rs # Admin: set reward_per_share & extra_reward
+|   |   +-- set_quest_interval.rs  # Admin: set min_quest_interval
 |   |   +-- stake.rs             # User: stake NARA
 |   |   +-- unstake.rs           # User: unstake NARA
 |   +-- state/
-|       +-- game_config.rs       # Authority + reward/staking config
+|       +-- game_config.rs       # Authority, quest_authority, treasury, reward/staking config
 |       +-- pool.rs              # Current round state + staking fields
 |       +-- winner_record.rs     # Per-agent per-round claim record
 |       +-- stake_record.rs      # Per-agent staking record
@@ -86,12 +92,15 @@ nara-quest/
 
 | Instruction | Description |
 |---|---|
-| `initialize` | Create `GameConfig` and `Pool` PDAs |
-| `create_question(question, answer_hash, deadline, reward_amount, difficulty)` | Post a new quest with Poseidon-hashed answer and difficulty level |
+| `initialize` | Create `GameConfig`, `Pool`, and register Treasury PDA |
+| `create_question(question, answer_hash, deadline, difficulty)` | Post a new quest; auto-funds Vault from Treasury. Callable by authority or quest_authority |
 | `submit_answer(proof_a, proof_b, proof_c, agent, model)` | Submit Groth16 proof with agent attribution; instant reward on success |
 | `transfer_authority(new_authority)` | Transfer admin rights |
 | `set_reward_config(min_reward_count, max_reward_count)` | Set min/max reward winner slots (admin only, 0 < min <= max) |
 | `set_stake_config(bps_high, bps_low, decay_ms)` | Set staking decay parameters in bps (admin only, all > 0) |
+| `set_quest_authority(new_quest_authority)` | Set quest_authority address (admin only; `Pubkey::default()` to disable) |
+| `set_reward_per_share(reward_per_share, extra_reward)` | Set per-share and extra reward amounts (admin only; cannot both be 0) |
+| `set_quest_interval(min_quest_interval)` | Set minimum quest creation interval in seconds (admin only; 0 to disable) |
 | `stake(amount)` | Stake SOL as WSOL into user's stake ATA; accumulates across calls |
 | `unstake(amount)` | Withdraw staked WSOL → SOL; requires round advance or deadline passed |
 
@@ -99,9 +108,10 @@ nara-quest/
 
 | Account | Seeds | Description |
 |---|---|---|
-| `GameConfig` | `["quest_config"]` | Authority, min/max_reward_count, stake_bps_high/low, decay_ms |
+| `GameConfig` | `["quest_config"]` | Authority, quest_authority, treasury, reward/staking config |
 | `Pool` | `["quest_pool"]` | Current quest state (round, question, deadline, difficulty, rewards, stake_high/low, avg_participant_stake) |
-| `Vault` | `["quest_vault"]` | System account holding reward NARA |
+| `Vault` | `["quest_vault"]` | System account holding per-round reward NARA |
+| `Treasury` | `["quest_treasury"]` | System account holding reserve funds (auto-tops-up Vault) |
 | `WinnerRecord` | `["quest_winner", user_pubkey]` | Per-agent claim record (stores last answered round) |
 | `StakeRecord` | `["quest_stake", user_pubkey]` | Per-user staking metadata (stake_round) |
 | Stake ATA | ATA(StakeRecord, WSOL) | Per-user WSOL token account holding staked amount |
@@ -116,7 +126,7 @@ nara-quest/
 
 | Code | Name | Description |
 |---|---|---|
-| 6000 | `Unauthorized` | Caller is not authority |
+| 6000 | `Unauthorized` | Caller is not authority or quest_authority |
 | 6001 | `NoActiveQuest` | No active quest (round == 0) |
 | 6002 | `DeadlineExpired` | Answer submitted after deadline |
 | 6003 | `InvalidProof` | ZK proof verification failed |
@@ -129,6 +139,9 @@ nara-quest/
 | 6010 | `UnstakeNotReady` | Round not advanced and deadline not passed |
 | 6011 | `InsufficientStakeBalance` | Unstake amount exceeds staked balance |
 | 6012 | `InsufficientStake` | Stake does not meet dynamic requirement |
+| 6013 | `QuestIntervalTooShort` | Quest creation interval too short (quest_authority only) |
+| 6014 | `InsufficientTreasury` | Treasury balance insufficient to cover deficit |
+| 6015 | `InvalidRewardPerShare` | reward_per_share and extra_reward cannot both be 0 |
 
 ## ZK Circuit
 

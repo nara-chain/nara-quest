@@ -9,5 +9,10 @@ pub struct GameConfig {
     pub stake_bps_high: u64,
     pub stake_bps_low: u64,
     pub decay_ms: i64,
+    pub treasury: Pubkey,
+    pub quest_authority: Pubkey,
+    pub min_quest_interval: i64,
+    pub reward_per_share: u64,
+    pub extra_reward: u64,
     pub _padding: [u8; 64],
 }

@@ -11,6 +11,11 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     game_config.stake_bps_high = DEFAULT_STAKE_BPS_HIGH;
     game_config.stake_bps_low = DEFAULT_STAKE_BPS_LOW;
     game_config.decay_ms = DEFAULT_DECAY_MS;
+    game_config.treasury = ctx.accounts.treasury.key();
+    game_config.quest_authority = ctx.accounts.authority.key();
+    game_config.min_quest_interval = DEFAULT_MIN_QUEST_INTERVAL;
+    game_config.reward_per_share = 0;
+    game_config.extra_reward = 0;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;
@@ -44,6 +49,13 @@ pub struct Initialize<'info> {
         bump,
     )]
     pub pool: Account<'info, Pool>,
+
+    /// CHECK: Treasury PDA (system-owned)
+    #[account(
+        seeds = [TREASURY_SEED],
+        bump,
+    )]
+    pub treasury: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
