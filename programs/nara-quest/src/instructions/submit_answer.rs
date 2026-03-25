@@ -56,25 +56,13 @@ pub fn handler_submit_answer(
         QuestError::InvalidProof
     })?;
 
-    // Record winner (init_if_needed + round check ensures no duplicates per round)
-    let pool_round = ctx.accounts.pool.round;
-    let winner_record = &mut ctx.accounts.winner_record;
-    require!(winner_record.round != pool_round, QuestError::AlreadyAnswered);
-    winner_record.round = pool_round;
-
-    // Increment winner count
-    let pool = &mut ctx.accounts.pool;
-    pool.winner_count += 1;
-
     // User's staked amount = WSOL balance in their stake token account
     let user_stake = ctx.accounts.stake_token_account.amount;
     let game_config = &ctx.accounts.game_config;
 
-    // Stake check: only activated when reward_count == max_reward_count (system at capacity)
-    let stake_ok = if pool.reward_count < game_config.max_reward_count {
-        true // not at capacity, no staking required
-    } else {
-        // At capacity: calculate dynamic stake requirement (parabolic decay)
+    // Stake check (before recording winner): only activated at capacity
+    let pool = &mut ctx.accounts.pool;
+    if pool.reward_count >= game_config.max_reward_count {
         let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
         let decay = game_config.decay_ms;
 
@@ -84,27 +72,33 @@ pub fn handler_submit_answer(
             let range = pool.stake_high.saturating_sub(pool.stake_low);
             let elapsed_u = elapsed_ms as u64;
             let decay_u = decay as u64;
-            // Convex parabola: high - (high - low) × (elapsed/decay)²
             pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
         };
 
-        user_stake >= effective_req
-    };
+        require!(user_stake >= effective_req, QuestError::InsufficientStake);
+    }
 
-    // All correct answerers accumulate avg_participant_stake (denominator = reward_count)
+    // Record winner (init_if_needed + round check ensures no duplicates per round)
+    let pool_round = ctx.accounts.pool.round;
+    let winner_record = &mut ctx.accounts.winner_record;
+    require!(winner_record.round != pool_round, QuestError::AlreadyAnswered);
+    winner_record.round = pool_round;
+
+    // Increment winner count and accumulate avg_participant_stake
+    let pool = &mut ctx.accounts.pool;
+    pool.winner_count += 1;
     if pool.reward_count > 0 {
         pool.avg_participant_stake = pool
             .avg_participant_stake
             .saturating_add(user_stake / pool.reward_count as u64);
     }
 
-    // Instant reward: transfer if within reward_count limit and staking requirement met
+    // Instant reward: transfer if within reward_count limit
     let reward_lamports;
-    if pool.winner_count <= pool.reward_count && stake_ok {
+    if pool.winner_count <= pool.reward_count {
         let reward = pool.reward_per_winner;
         reward_lamports = reward;
 
-        // Transfer lamports from vault PDA to user
         let vault_bump = ctx.bumps.vault;
         let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
         system_program::transfer(
@@ -127,19 +121,11 @@ pub fn handler_submit_answer(
         );
     } else {
         reward_lamports = 0;
-
-        if !stake_ok {
-            msg!(
-                "Answer verified, no reward (insufficient stake {})",
-                user_stake,
-            );
-        } else {
-            msg!(
-                "Answer verified, no reward (winner {}, limit {})",
-                pool.winner_count,
-                pool.reward_count
-            );
-        }
+        msg!(
+            "Answer verified, no reward (winner {}, limit {})",
+            pool.winner_count,
+            pool.reward_count
+        );
     }
 
     emit!(AnswerSubmitted {

@@ -1257,6 +1257,7 @@ describe("nara-quest", () => {
       expect(rewardedCount).to.equal(MAX_REWARD);
 
       const poolAfter = await program.account.pool.fetch(poolPda);
+      // Round 1: stake_high/low=0, so all users pass stake check; winner_count = NUM_USERS
       expect(poolAfter.winnerCount).to.equal(NUM_USERS);
 
       // avg_participant_stake should reflect all 20 answerers' stakes
@@ -1319,22 +1320,28 @@ describe("nara-quest", () => {
       );
 
       // Launch all submissions concurrently with random 0~5s delays
+      // Users with insufficient stake will get InsufficientStake error (tx rejected, no slot consumed)
       await Promise.all(users.map(async (user, i) => {
         const delay = Math.floor(Math.random() * 5000);
         await sleep(delay);
 
-        await program.methods
-          .submitAnswer(proofs2[i].proofA, proofs2[i].proofB, proofs2[i].proofC, TEST_AGENT, TEST_MODEL)
-          .accountsPartial({
-            user: user.publicKey,
-            payer: sponsor.publicKey,
-            wsolMint: NATIVE_MINT,
-          })
-          .preInstructions([
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-          ])
-          .signers([sponsor])
-          .rpc();
+        try {
+          await program.methods
+            .submitAnswer(proofs2[i].proofA, proofs2[i].proofB, proofs2[i].proofC, TEST_AGENT, TEST_MODEL)
+            .accountsPartial({
+              user: user.publicKey,
+              payer: sponsor.publicKey,
+              wsolMint: NATIVE_MINT,
+            })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+            ])
+            .signers([sponsor])
+            .rpc();
+        } catch (err) {
+          // InsufficientStake is expected for users who don't meet staking requirement
+          if (!String(err).includes("InsufficientStake")) throw err;
+        }
       }));
 
       const balsAfter = await Promise.all(
@@ -1347,11 +1354,17 @@ describe("nara-quest", () => {
       }
 
       const poolFinal = await program.account.pool.fetch(poolPda);
-      expect(poolFinal.winnerCount).to.equal(NUM_USERS);
+      // winnerCount only includes users who met stake requirement (slot not consumed otherwise)
+      expect(poolFinal.winnerCount).to.equal(rewardedCount);
 
       // With staking active, users with insufficient stake should be rejected
+      // Zero-stake users (odd indices) should never get rewards
+      for (let i = 1; i < NUM_USERS; i += 2) {
+        expect(balsAfter[i]).to.equal(balsBefore[i], `zero-stake user ${i} should not be rewarded`);
+      }
+
       console.log(`    Round 2: ${rewardedCount} rewarded out of ${NUM_USERS}`);
-      expect(rewardedCount).to.be.lessThan(MAX_REWARD);
+      expect(rewardedCount).to.be.at.most(MAX_REWARD);
     });
 
     after(async () => {
