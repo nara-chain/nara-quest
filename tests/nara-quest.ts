@@ -700,7 +700,9 @@ describe("nara-quest", () => {
 
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.winnerCount).to.equal(0);
-      expect(pool.rewardCount).to.equal(10); // max(2, 10) = 10
+      // ±10% rate limit: prev_reward_count=10, target=2, delta=1 → adjusted=9
+      // But min_reward_count=10 clamps it back to 10
+      expect(pool.rewardCount).to.equal(10);
     });
 
     it("user1 can answer again in new round (same PDA reused)", async () => {
@@ -728,6 +730,93 @@ describe("nara-quest", () => {
       const recordPda = winnerRecordPda(program.programId, user1.publicKey);
       const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
       expect(winnerRecord.round.toNumber()).to.equal(pool.round.toNumber());
+    });
+  });
+
+  describe("reward_count rate limiting (±10%)", () => {
+    before(async () => {
+      // Lower min_reward_count to 1 so rate limit effect is visible (not masked by min floor)
+      await program.methods
+        .setRewardConfig(1, 10000)
+        .rpc();
+    });
+
+    it("decrease is capped at 10% per round", async () => {
+      // State from previous tests: reward_count=10, winner_count=1
+      const poolBefore = await program.account.pool.fetch(poolPda);
+      expect(poolBefore.rewardCount).to.equal(10);
+      expect(poolBefore.winnerCount).to.equal(1);
+
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Rate limit decrease test",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      // prev_reward_count=10, target=1, max_delta=max(10*10%,1)=1
+      // adjusted = clamp(1, 9, 11) = 9 (not 1!)
+      expect(pool.rewardCount).to.equal(9);
+    });
+
+    it("continues to decrease gradually each round", async () => {
+      // State: reward_count=9, winner_count=0 (no one answered)
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Rate limit decrease test 2",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      // prev_reward_count=9, target=0, max_delta=max(floor(9*10%)=0,1)=1
+      // adjusted = clamp(0, 8, 10) = 8
+      expect(pool.rewardCount).to.equal(8);
+    });
+
+    it("min_reward_count floor is still enforced after rate limiting", async () => {
+      // Set min_reward_count = 8 (equal to current reward_count)
+      await program.methods
+        .setRewardConfig(8, 10000)
+        .rpc();
+
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Rate limit with min floor test",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({
+          caller: authority.publicKey,
+        })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      // Rate limit: prev=8, target=0, delta=1 → adjusted=7
+      // But min_reward_count=8 clamps it back to 8
+      expect(pool.rewardCount).to.equal(8);
+    });
+
+    after(async () => {
+      // Restore original config for subsequent tests
+      await program.methods
+        .setRewardConfig(10, 16384)
+        .rpc();
     });
   });
 
@@ -1293,7 +1382,8 @@ describe("nara-quest", () => {
 
       const pool = await program.account.pool.fetch(poolPda);
 
-      // reward_count = min(max(20, 10), 10) = 10 (capped at max)
+      // ±10% rate limit: prev=10, target=20, delta=1 → adjusted=11
+      // max_reward_count=10 clamps it to 10
       expect(pool.rewardCount).to.equal(MAX_REWARD);
 
       // Staking parameters should be derived from prevAvg
