@@ -14,5 +14,6 @@ pub struct GameConfig {
     pub min_quest_interval: i64,
     pub reward_per_share: u64,
     pub extra_reward: u64,
-    pub _padding: [u8; 64],
+    pub stake_authority: Pubkey,
+    pub _padding: [u8; 32],
 }

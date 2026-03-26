@@ -85,4 +85,19 @@ pub mod nara_quest {
     ) -> Result<()> {
         instructions::set_quest_interval::handler_set_quest_interval(ctx, min_quest_interval)
     }
+
+    pub fn set_stake_authority(
+        ctx: Context<SetStakeAuthority>,
+        new_stake_authority: Pubkey,
+    ) -> Result<()> {
+        instructions::set_stake_authority::handler_set_stake_authority(ctx, new_stake_authority)
+    }
+
+    pub fn adjust_free_stake(
+        ctx: Context<AdjustFreeStake>,
+        delta: i32,
+        reason: String,
+    ) -> Result<()> {
+        instructions::adjust_free_stake::handler_adjust_free_stake(ctx, delta, reason)
+    }
 }

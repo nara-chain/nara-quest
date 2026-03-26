@@ -49,4 +49,10 @@ pub enum QuestError {
 
     #[msg("Invalid reward config: reward_per_share and extra_reward cannot both be 0")]
     InvalidRewardPerShare,
+
+    #[msg("Delta must not be zero")]
+    InvalidDelta,
+
+    #[msg("Free credits overflow")]
+    FreeCreditsOverflow,
 }

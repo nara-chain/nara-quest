@@ -16,6 +16,7 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     game_config.min_quest_interval = DEFAULT_MIN_QUEST_INTERVAL;
     game_config.reward_per_share = 0;
     game_config.extra_reward = 0;
+    game_config.stake_authority = Pubkey::default();
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;

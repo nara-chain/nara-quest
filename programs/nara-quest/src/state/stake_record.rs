@@ -4,5 +4,6 @@ use anchor_lang::prelude::*;
 #[derive(InitSpace)]
 pub struct StakeRecord {
     pub stake_round: u64,
-    pub _padding: [u8; 64],
+    pub free_credits: u32,
+    pub _padding: [u8; 60],
 }

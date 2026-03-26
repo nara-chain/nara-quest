@@ -62,6 +62,8 @@ pub fn handler_submit_answer(
 
     // Stake check (before recording winner): only activated at capacity
     let pool = &mut ctx.accounts.pool;
+    let mut used_free_stake = false;
+
     if pool.reward_count >= game_config.max_reward_count {
         let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
         let decay = game_config.decay_ms;
@@ -75,7 +77,14 @@ pub fn handler_submit_answer(
             pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
         };
 
-        require!(user_stake >= effective_req, QuestError::InsufficientStake);
+        if user_stake >= effective_req {
+            // Sufficient stake, pass normally
+        } else if ctx.accounts.stake_record.free_credits > 0 {
+            // Insufficient stake but has free credits, bypass stake check
+            used_free_stake = true;
+        } else {
+            return err!(QuestError::InsufficientStake);
+        }
     }
 
     // Record winner (init_if_needed + round check ensures no duplicates per round)
@@ -124,6 +133,13 @@ pub fn handler_submit_answer(
             ),
             actual_reward,
         )?;
+    }
+
+    // Consume free stake credit only when: stake check was active + bypassed + reward received
+    if actual_reward > 0 && used_free_stake {
+        let stake_record = &mut ctx.accounts.stake_record;
+        stake_record.free_credits -= 1;
+        msg!("Free stake credit consumed, remaining: {}", stake_record.free_credits);
     }
 
     if pool.winner_count <= pool.reward_count {

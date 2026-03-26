@@ -1464,4 +1464,250 @@ describe("nara-quest", () => {
         .rpc();
     });
   });
+
+  describe("free stake credits", () => {
+    const stakeAuthority = Keypair.generate();
+    const freeUser = Keypair.generate();
+
+    function stakeRecordPda(user: PublicKey): PublicKey {
+      const [pda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("quest_stake"), user.toBuffer()],
+        program.programId
+      );
+      return pda;
+    }
+
+    before(async () => {
+      // Fund stakeAuthority for gas and init_if_needed rent
+      const sig = await provider.connection.requestAirdrop(
+        stakeAuthority.publicKey,
+        2 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+    });
+
+    describe("set_stake_authority", () => {
+      it("authority can set stake_authority", async () => {
+        await program.methods
+          .setStakeAuthority(stakeAuthority.publicKey)
+          .rpc();
+
+        const config = await program.account.gameConfig.fetch(gameConfigPda);
+        expect(config.stakeAuthority.toBase58()).to.equal(
+          stakeAuthority.publicKey.toBase58()
+        );
+      });
+
+      it("non-authority cannot set stake_authority", async () => {
+        try {
+          await program.methods
+            .setStakeAuthority(freeUser.publicKey)
+            .accountsPartial({ authority: user1.publicKey })
+            .signers([user1])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("Unauthorized");
+        }
+      });
+    });
+
+    describe("adjust_free_stake", () => {
+      it("stake_authority can grant free credits", async () => {
+        await program.methods
+          .adjustFreeStake(5, "initial grant")
+          .accountsPartial({
+            user: freeUser.publicKey,
+            caller: stakeAuthority.publicKey,
+          })
+          .signers([stakeAuthority])
+          .rpc();
+
+        const record = await program.account.stakeRecord.fetch(
+          stakeRecordPda(freeUser.publicKey)
+        );
+        expect(record.freeCredits).to.equal(5);
+      });
+
+      it("stake_authority can reduce free credits", async () => {
+        await program.methods
+          .adjustFreeStake(-2, "partial revoke")
+          .accountsPartial({
+            user: freeUser.publicKey,
+            caller: stakeAuthority.publicKey,
+          })
+          .signers([stakeAuthority])
+          .rpc();
+
+        const record = await program.account.stakeRecord.fetch(
+          stakeRecordPda(freeUser.publicKey)
+        );
+        expect(record.freeCredits).to.equal(3);
+      });
+
+      it("reducing below 0 saturates to 0", async () => {
+        await program.methods
+          .adjustFreeStake(-100, "over-revoke test")
+          .accountsPartial({
+            user: freeUser.publicKey,
+            caller: stakeAuthority.publicKey,
+          })
+          .signers([stakeAuthority])
+          .rpc();
+
+        const record = await program.account.stakeRecord.fetch(
+          stakeRecordPda(freeUser.publicKey)
+        );
+        expect(record.freeCredits).to.equal(0);
+      });
+
+      it("delta=0 fails with InvalidDelta", async () => {
+        try {
+          await program.methods
+            .adjustFreeStake(0, "should fail")
+            .accountsPartial({
+              user: freeUser.publicKey,
+              caller: stakeAuthority.publicKey,
+            })
+            .signers([stakeAuthority])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("InvalidDelta");
+        }
+      });
+
+      it("non-stake_authority cannot adjust", async () => {
+        try {
+          await program.methods
+            .adjustFreeStake(1, "unauthorized")
+            .accountsPartial({
+              user: freeUser.publicKey,
+              caller: user1.publicKey,
+            })
+            .signers([user1])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("Unauthorized");
+        }
+      });
+    });
+
+    describe("submit_answer with free credits", () => {
+      before(async () => {
+        // Force staking activation: min=max=10
+        await program.methods.setRewardConfig(10, 10).rpc();
+
+        // Grant 2 free credits to freeUser
+        await program.methods
+          .adjustFreeStake(2, "test credits for submit")
+          .accountsPartial({
+            user: freeUser.publicKey,
+            caller: stakeAuthority.publicKey,
+          })
+          .signers([stakeAuthority])
+          .rpc();
+
+        // Ensure treasury has funds
+        await fundTreasury(5 * LAMPORTS_PER_SOL);
+
+        // Create question (staking active since reward_count will hit max=10)
+        const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+        await program.methods
+          .createQuestion(
+            "Free stake test question",
+            answerHashOnChain,
+            deadline,
+            DEFAULT_DIFFICULTY
+          )
+          .accountsPartial({ caller: authority.publicKey })
+          .rpc();
+      });
+
+      it("user with free credits bypasses stake check, credit decremented on reward", async () => {
+        const pool = await program.account.pool.fetch(poolPda);
+        // Staking should be active
+        expect(pool.rewardCount).to.equal(10);
+
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          freeUser.publicKey, pool.round.toString()
+        );
+
+        const balBefore = await provider.connection.getBalance(freeUser.publicKey);
+
+        await program.methods
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: freeUser.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+
+        // Verify reward received
+        const balAfter = await provider.connection.getBalance(freeUser.publicKey);
+        expect(balAfter).to.be.greaterThan(balBefore);
+
+        // Verify free_credits decremented: 2 → 1
+        const record = await program.account.stakeRecord.fetch(
+          stakeRecordPda(freeUser.publicKey)
+        );
+        expect(record.freeCredits).to.equal(1);
+      });
+
+      it("does not consume free credits when staking is not active", async () => {
+        // Widen max so staking deactivates
+        await program.methods.setRewardConfig(10, 1000).rpc();
+
+        // Create new round (staking NOT active since reward_count < 1000)
+        const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+        await program.methods
+          .createQuestion(
+            "Free stake no-consume test",
+            answerHashOnChain,
+            deadline,
+            DEFAULT_DIFFICULTY
+          )
+          .accountsPartial({ caller: authority.publicKey })
+          .rpc();
+
+        const pool = await program.account.pool.fetch(poolPda);
+        expect(pool.rewardCount).to.be.lessThan(1000); // staking NOT active
+
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          freeUser.publicKey, pool.round.toString()
+        );
+
+        await program.methods
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: freeUser.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+
+        // Credits should still be 1 (not consumed when staking is inactive)
+        const record = await program.account.stakeRecord.fetch(
+          stakeRecordPda(freeUser.publicKey)
+        );
+        expect(record.freeCredits).to.equal(1);
+      });
+
+      after(async () => {
+        await program.methods.setRewardConfig(10, 1000).rpc();
+      });
+    });
+  });
 });

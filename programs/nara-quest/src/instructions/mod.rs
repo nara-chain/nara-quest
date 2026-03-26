@@ -9,6 +9,8 @@ pub mod set_reward_per_share;
 pub mod set_quest_interval;
 pub mod stake;
 pub mod unstake;
+pub mod set_stake_authority;
+pub mod adjust_free_stake;
 
 pub use initialize::*;
 pub use create_question::*;
@@ -21,3 +23,5 @@ pub use set_reward_per_share::*;
 pub use set_quest_interval::*;
 pub use stake::*;
 pub use unstake::*;
+pub use set_stake_authority::*;
+pub use adjust_free_stake::*;
