@@ -126,12 +126,21 @@ pub fn handler_submit_answer(
         )?;
     }
 
-    msg!(
-        "Answer verified, reward {} lamports (winner {}/{})",
-        actual_reward,
-        pool.winner_count,
-        pool.reward_count
-    );
+    if pool.winner_count <= pool.reward_count {
+        msg!(
+            "Answer verified, reward {} lamports (winner {}/{})",
+            actual_reward,
+            pool.winner_count,
+            pool.reward_count
+        );
+    } else {
+        msg!(
+            "Answer verified, base reward {} lamports (winner {}/{}, exceeded reward limit, base reward only)",
+            actual_reward,
+            pool.winner_count,
+            pool.reward_count
+        );
+    }
 
     emit!(AnswerSubmitted {
         round: pool.round,
