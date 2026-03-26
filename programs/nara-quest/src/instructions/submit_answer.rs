@@ -93,46 +93,51 @@ pub fn handler_submit_answer(
             .saturating_add(user_stake / pool.reward_count as u64);
     }
 
-    // Instant reward: transfer if within reward_count limit
-    let reward_lamports;
-    if pool.winner_count <= pool.reward_count {
-        let reward = pool.reward_per_winner;
-        reward_lamports = reward;
+    // Determine reward: full reward if within limit, base reward (reward_per_share) otherwise
+    let reward_lamports = if pool.winner_count <= pool.reward_count {
+        pool.reward_per_winner
+    } else {
+        game_config.reward_per_share
+    };
 
+    // Transfer reward from vault PDA to user (skip if vault has insufficient balance)
+    let vault_info = ctx.accounts.vault.to_account_info();
+    let rent = Rent::get()?;
+    let vault_available = vault_info.lamports().saturating_sub(rent.minimum_balance(vault_info.data_len()));
+    let actual_reward = if vault_available >= reward_lamports {
+        reward_lamports
+    } else {
+        0
+    };
+
+    if actual_reward > 0 {
         let vault_bump = ctx.bumps.vault;
         let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, &[vault_bump]]];
         system_program::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
+                    from: vault_info,
                     to: ctx.accounts.user.to_account_info(),
                 },
                 signer_seeds,
             ),
-            reward,
+            actual_reward,
         )?;
-
-        msg!(
-            "Answer verified, reward {} lamports (winner {}/{})",
-            reward,
-            pool.winner_count,
-            pool.reward_count
-        );
-    } else {
-        reward_lamports = 0;
-        msg!(
-            "Answer verified, no reward (winner {}, limit {})",
-            pool.winner_count,
-            pool.reward_count
-        );
     }
+
+    msg!(
+        "Answer verified, reward {} lamports (winner {}/{})",
+        actual_reward,
+        pool.winner_count,
+        pool.reward_count
+    );
 
     emit!(AnswerSubmitted {
         round: pool.round,
         user: ctx.accounts.user.key(),
-        rewarded: reward_lamports > 0,
-        reward_lamports,
+        rewarded: actual_reward > 0,
+        reward_lamports: actual_reward,
         agent,
         model,
     });
