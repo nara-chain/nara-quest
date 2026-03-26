@@ -38,22 +38,26 @@ pub fn handler_create_question(
         }
     }
 
-    // Calculate reward_count: clamp(prev_winner_count, min_reward_count, max_reward_count)
+    // Calculate reward_count: target is prev_winner_count, but capped to ±10% change per round
     let pool = &mut ctx.accounts.pool;
     let min_reward_count = game_config.min_reward_count;
     let max_reward_count = game_config.max_reward_count;
-    let prev_winner_count = pool.winner_count;
+    let prev_reward_count = pool.reward_count;
+    let target = pool.winner_count;
 
-    let uncapped = if prev_winner_count >= min_reward_count {
-        prev_winner_count
+    let adjusted = if prev_reward_count == 0 {
+        // First round: no previous baseline, use target directly
+        target
     } else {
-        min_reward_count
+        // ±10% rate limit (min delta = 1 to avoid getting stuck at small values)
+        let max_delta = (prev_reward_count as u64 * REWARD_ADJUST_BPS as u64 / BPS_BASE) as u32;
+        let max_delta = if max_delta == 0 { 1 } else { max_delta };
+        let upper = prev_reward_count.saturating_add(max_delta);
+        let lower = prev_reward_count.saturating_sub(max_delta);
+        target.clamp(lower, upper)
     };
-    let reward_count = if uncapped > max_reward_count {
-        max_reward_count
-    } else {
-        uncapped
-    };
+
+    let reward_count = adjusted.clamp(min_reward_count, max_reward_count);
 
     // Calculate total_reward from config: reward_per_share * reward_count + extra_reward
     let reward_per_share = game_config.reward_per_share;

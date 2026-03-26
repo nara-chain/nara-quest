@@ -11,6 +11,7 @@ pub const DEFAULT_STAKE_BPS_HIGH: u64 = 100_000; // 10x avg (100000 / 10000)
 pub const DEFAULT_STAKE_BPS_LOW: u64 = 1_000;    // 0.1x avg (1000 / 10000)
 pub const BPS_BASE: u64 = 10_000;
 pub const DEFAULT_DECAY_MS: i64 = 2000;
+pub const REWARD_ADJUST_BPS: u32 = 1000; // max ±10% change per round
 
 pub const TREASURY_SEED: &[u8] = b"quest_treasury";
 pub const DEFAULT_MIN_QUEST_INTERVAL: i64 = 30; // 30 seconds
