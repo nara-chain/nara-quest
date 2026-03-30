@@ -1793,15 +1793,24 @@ describe("nara-quest", () => {
           .rpc();
       });
 
-      it("user who answered can claim airdrop", async () => {
+      it("user with valid ZK proof can claim airdrop", async () => {
+        const pool = await program.account.pool.fetch(poolPda);
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          user1.publicKey, pool.round.toString()
+        );
+
         const balBefore = await provider.connection.getBalance(user1.publicKey);
 
         await program.methods
-          .claimAirdrop()
+          .claimAirdrop(proofA, proofB, proofC)
           .accountsPartial({
             user: user1.publicKey,
             payer: sponsor.publicKey,
           })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
           .signers([sponsor])
           .rpc();
 
@@ -1814,31 +1823,23 @@ describe("nara-quest", () => {
         expect(record.lastAirdropTs.toNumber()).to.be.greaterThan(0);
       });
 
-      it("user who did not answer this round cannot claim (AirdropNotEligible)", async () => {
-        try {
-          await program.methods
-            .claimAirdrop()
-            .accountsPartial({
-              user: user2.publicKey,
-              payer: sponsor.publicKey,
-            })
-            .signers([sponsor])
-            .rpc();
-          expect.fail("should have thrown");
-        } catch (err) {
-          expect(String(err)).to.include("AirdropNotEligible");
-        }
-      });
-
       it("cannot claim again within 24h cooldown (AirdropCooldown)", async () => {
-        // user1 already claimed above; try again immediately
+        const pool = await program.account.pool.fetch(poolPda);
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          user1.publicKey, pool.round.toString()
+        );
+
         try {
           await program.methods
-            .claimAirdrop()
+            .claimAirdrop(proofA, proofB, proofC)
             .accountsPartial({
               user: user1.publicKey,
               payer: sponsor.publicKey,
             })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+            ])
             .signers([sponsor])
             .rpc();
           expect.fail("should have thrown");
@@ -1848,18 +1849,26 @@ describe("nara-quest", () => {
       });
 
       it("airdrop disabled when amount=0 (AirdropDisabled)", async () => {
-        // Disable airdrop
         await program.methods
           .setAirdropConfig(new anchor.BN(0), MAX_AIRDROP_COUNT)
           .rpc();
 
+        const pool = await program.account.pool.fetch(poolPda);
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          user1.publicKey, pool.round.toString()
+        );
+
         try {
           await program.methods
-            .claimAirdrop()
+            .claimAirdrop(proofA, proofB, proofC)
             .accountsPartial({
               user: user1.publicKey,
               payer: sponsor.publicKey,
             })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+            ])
             .signers([sponsor])
             .rpc();
           expect.fail("should have thrown");
@@ -1871,6 +1880,70 @@ describe("nara-quest", () => {
         await program.methods
           .setAirdropConfig(new anchor.BN(AIRDROP_AMOUNT), MAX_AIRDROP_COUNT)
           .rpc();
+      });
+
+      it("new address: claim airdrop first, then submit answer (sponsored gas)", async () => {
+        const newUser = Keypair.generate();
+        // newUser has 0 SOL — fully sponsored
+
+        const pool = await program.account.pool.fetch(poolPda);
+
+        // Step 1: Claim airdrop first (no prior submit_answer)
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          newUser.publicKey, pool.round.toString()
+        );
+
+        await program.methods
+          .claimAirdrop(proofA, proofB, proofC)
+          .accountsPartial({
+            user: newUser.publicKey,
+            payer: sponsor.publicKey,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+
+        // Verify airdrop received
+        const balAfterAirdrop = await provider.connection.getBalance(newUser.publicKey);
+        expect(balAfterAirdrop).to.equal(AIRDROP_AMOUNT);
+
+        // Verify winner_record: airdrop_count=1, round=0 (not set by claim_airdrop)
+        const recordPda = winnerRecordPda(program.programId, newUser.publicKey);
+        const recordAfterAirdrop = await program.account.winnerRecord.fetch(recordPda);
+        expect(recordAfterAirdrop.airdropCount).to.equal(1);
+        expect(recordAfterAirdrop.round.toNumber()).to.equal(0); // untouched
+
+        // Step 2: Submit answer (same round, same proof)
+        await program.methods
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: newUser.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+
+        // Verify answer reward received on top of airdrop
+        const balAfterAnswer = await provider.connection.getBalance(newUser.publicKey);
+        expect(balAfterAnswer).to.be.greaterThan(balAfterAirdrop);
+
+        // Verify winner_record: round updated, airdrop_count still 1
+        const recordAfterAnswer = await program.account.winnerRecord.fetch(recordPda);
+        expect(recordAfterAnswer.round.toNumber()).to.equal(pool.round.toNumber());
+        expect(recordAfterAnswer.airdropCount).to.equal(1); // unchanged by submit_answer
+
+        console.log(
+          `    New user: airdrop=${AIRDROP_AMOUNT / LAMPORTS_PER_SOL} SOL, ` +
+          `answer reward=${(balAfterAnswer - balAfterAirdrop) / LAMPORTS_PER_SOL} SOL, ` +
+          `total=${balAfterAnswer / LAMPORTS_PER_SOL} SOL`
+        );
       });
     });
   });

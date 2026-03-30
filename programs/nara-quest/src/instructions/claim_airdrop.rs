@@ -1,23 +1,61 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use groth16_solana::groth16::Groth16Verifier;
 
 use crate::constants::*;
 use crate::errors::QuestError;
+use crate::instructions::submit_answer::VERIFYING_KEY;
 use crate::state::*;
 
-pub fn handler_claim_airdrop(ctx: Context<ClaimAirdrop>) -> Result<()> {
+pub fn handler_claim_airdrop(
+    ctx: Context<ClaimAirdrop>,
+    proof_a: [u8; 64],
+    proof_b: [u8; 128],
+    proof_c: [u8; 64],
+) -> Result<()> {
     let game_config = &ctx.accounts.game_config;
     let airdrop_amount = game_config.airdrop_amount;
 
     require!(airdrop_amount > 0, QuestError::AirdropDisabled);
 
     let pool = &ctx.accounts.pool;
-    let winner_record = &ctx.accounts.winner_record;
 
-    require!(
-        winner_record.round == pool.round,
-        QuestError::AirdropNotEligible
-    );
+    require!(pool.round > 0, QuestError::NoActiveQuest);
+
+    // Verify Groth16 proof (same logic as submit_answer)
+    let user_key = ctx.accounts.user.key();
+    let user_bytes = user_key.to_bytes();
+
+    let mut pubkey_lo = [0u8; 32];
+    pubkey_lo[16..32].copy_from_slice(&user_bytes[16..32]);
+
+    let mut pubkey_hi = [0u8; 32];
+    pubkey_hi[16..32].copy_from_slice(&user_bytes[0..16]);
+
+    let mut round_bytes = [0u8; 32];
+    round_bytes[24..32].copy_from_slice(&pool.round.to_be_bytes());
+
+    let public_inputs: [[u8; 32]; 4] = [pool.answer_hash, pubkey_lo, pubkey_hi, round_bytes];
+
+    let mut verifier = Groth16Verifier::new(
+        &proof_a,
+        &proof_b,
+        &proof_c,
+        &public_inputs,
+        &VERIFYING_KEY,
+    )
+    .map_err(|e| {
+        msg!("Groth16Verifier::new failed: {:?}", e);
+        QuestError::InvalidProof
+    })?;
+
+    verifier.verify().map_err(|e| {
+        msg!("Groth16Verifier::verify failed: {:?}", e);
+        QuestError::InvalidProof
+    })?;
+
+    // Check airdrop limits
+    let winner_record = &ctx.accounts.winner_record;
     require!(
         winner_record.airdrop_count < game_config.max_airdrop_count,
         QuestError::AirdropMaxReached
@@ -81,7 +119,9 @@ pub struct ClaimAirdrop<'info> {
     pub pool: Account<'info, Pool>,
 
     #[account(
-        mut,
+        init_if_needed,
+        payer = payer,
+        space = 8 + WinnerRecord::INIT_SPACE,
         seeds = [WINNER_SEED, user.key().as_ref()],
         bump,
     )]
@@ -95,7 +135,7 @@ pub struct ClaimAirdrop<'info> {
     )]
     pub airdrop_fund: UncheckedAccount<'info>,
 
-    /// CHECK: User who answered correctly and receives airdrop; identity bound by winner_record PDA seeds
+    /// CHECK: User who proves answer knowledge via ZK proof; pubkey bound in proof
     #[account(mut)]
     pub user: UncheckedAccount<'info>,
 

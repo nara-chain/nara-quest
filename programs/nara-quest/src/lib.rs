@@ -109,8 +109,13 @@ pub mod nara_quest {
         instructions::set_airdrop_config::handler_set_airdrop_config(ctx, airdrop_amount, max_airdrop_count)
     }
 
-    pub fn claim_airdrop(ctx: Context<ClaimAirdrop>) -> Result<()> {
-        instructions::claim_airdrop::handler_claim_airdrop(ctx)
+    pub fn claim_airdrop(
+        ctx: Context<ClaimAirdrop>,
+        proof_a: [u8; 64],
+        proof_b: [u8; 128],
+        proof_c: [u8; 64],
+    ) -> Result<()> {
+        instructions::claim_airdrop::handler_claim_airdrop(ctx, proof_a, proof_b, proof_c)
     }
 
     pub fn expand_config(ctx: Context<ExpandConfig>, additional_size: u32) -> Result<()> {
