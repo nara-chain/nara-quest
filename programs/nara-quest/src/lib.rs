@@ -112,4 +112,8 @@ pub mod nara_quest {
     pub fn claim_airdrop(ctx: Context<ClaimAirdrop>) -> Result<()> {
         instructions::claim_airdrop::handler_claim_airdrop(ctx)
     }
+
+    pub fn expand_config(ctx: Context<ExpandConfig>, additional_size: u32) -> Result<()> {
+        instructions::expand_config::handler_expand_config(ctx, additional_size)
+    }
 }
