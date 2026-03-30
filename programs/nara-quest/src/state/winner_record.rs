@@ -4,5 +4,7 @@ use anchor_lang::prelude::*;
 #[derive(InitSpace)]
 pub struct WinnerRecord {
     pub round: u64,
-    pub _padding: [u8; 64],
+    pub airdrop_count: u32,
+    pub last_airdrop_ts: i64,
+    pub _padding: [u8; 52],
 }

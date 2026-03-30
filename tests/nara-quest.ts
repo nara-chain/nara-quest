@@ -1710,4 +1710,168 @@ describe("nara-quest", () => {
       });
     });
   });
+
+  describe("airdrop", () => {
+    const AIRDROP_AMOUNT = 0.05 * LAMPORTS_PER_SOL;
+    const MAX_AIRDROP_COUNT = 3;
+    let airdropPda: PublicKey;
+
+    before(async () => {
+      [airdropPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("quest_airdrop")],
+        program.programId
+      );
+
+      // Fund airdrop PDA
+      const tx = new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: authority.publicKey,
+          toPubkey: airdropPda,
+          lamports: 5 * LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(tx);
+    });
+
+    describe("set_airdrop_config", () => {
+      it("authority can set airdrop config", async () => {
+        await program.methods
+          .setAirdropConfig(new anchor.BN(AIRDROP_AMOUNT), MAX_AIRDROP_COUNT)
+          .rpc();
+
+        const config = await program.account.gameConfig.fetch(gameConfigPda);
+        expect(config.airdropAmount.toNumber()).to.equal(AIRDROP_AMOUNT);
+        expect(config.maxAirdropCount).to.equal(MAX_AIRDROP_COUNT);
+      });
+
+      it("non-authority cannot set airdrop config", async () => {
+        try {
+          await program.methods
+            .setAirdropConfig(new anchor.BN(AIRDROP_AMOUNT), MAX_AIRDROP_COUNT)
+            .accountsPartial({ authority: user1.publicKey })
+            .signers([user1])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("Unauthorized");
+        }
+      });
+    });
+
+    describe("claim_airdrop", () => {
+      before(async () => {
+        // Create a question and have user1 answer it
+        await fundTreasury(5 * LAMPORTS_PER_SOL);
+        const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+        await program.methods
+          .createQuestion(
+            "Airdrop test question",
+            answerHashOnChain,
+            deadline,
+            DEFAULT_DIFFICULTY
+          )
+          .accountsPartial({ caller: authority.publicKey })
+          .rpc();
+
+        const pool = await program.account.pool.fetch(poolPda);
+        const { proofA, proofB, proofC } = await generateProof(
+          snarkjs, TEST_ANSWER, answerHashStr,
+          user1.publicKey, pool.round.toString()
+        );
+
+        await program.methods
+          .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
+          .accountsPartial({
+            user: user1.publicKey,
+            payer: sponsor.publicKey,
+            wsolMint: NATIVE_MINT,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .signers([sponsor])
+          .rpc();
+      });
+
+      it("user who answered can claim airdrop", async () => {
+        const balBefore = await provider.connection.getBalance(user1.publicKey);
+
+        await program.methods
+          .claimAirdrop()
+          .accountsPartial({
+            user: user1.publicKey,
+            payer: sponsor.publicKey,
+          })
+          .signers([sponsor])
+          .rpc();
+
+        const balAfter = await provider.connection.getBalance(user1.publicKey);
+        expect(balAfter - balBefore).to.equal(AIRDROP_AMOUNT);
+
+        const recordPda = winnerRecordPda(program.programId, user1.publicKey);
+        const record = await program.account.winnerRecord.fetch(recordPda);
+        expect(record.airdropCount).to.equal(1);
+        expect(record.lastAirdropTs.toNumber()).to.be.greaterThan(0);
+      });
+
+      it("user who did not answer this round cannot claim (AirdropNotEligible)", async () => {
+        try {
+          await program.methods
+            .claimAirdrop()
+            .accountsPartial({
+              user: user2.publicKey,
+              payer: sponsor.publicKey,
+            })
+            .signers([sponsor])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("AirdropNotEligible");
+        }
+      });
+
+      it("cannot claim again within 24h cooldown (AirdropCooldown)", async () => {
+        // user1 already claimed above; try again immediately
+        try {
+          await program.methods
+            .claimAirdrop()
+            .accountsPartial({
+              user: user1.publicKey,
+              payer: sponsor.publicKey,
+            })
+            .signers([sponsor])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("AirdropCooldown");
+        }
+      });
+
+      it("airdrop disabled when amount=0 (AirdropDisabled)", async () => {
+        // Disable airdrop
+        await program.methods
+          .setAirdropConfig(new anchor.BN(0), MAX_AIRDROP_COUNT)
+          .rpc();
+
+        try {
+          await program.methods
+            .claimAirdrop()
+            .accountsPartial({
+              user: user1.publicKey,
+              payer: sponsor.publicKey,
+            })
+            .signers([sponsor])
+            .rpc();
+          expect.fail("should have thrown");
+        } catch (err) {
+          expect(String(err)).to.include("AirdropDisabled");
+        }
+
+        // Re-enable
+        await program.methods
+          .setAirdropConfig(new anchor.BN(AIRDROP_AMOUNT), MAX_AIRDROP_COUNT)
+          .rpc();
+      });
+    });
+  });
 });

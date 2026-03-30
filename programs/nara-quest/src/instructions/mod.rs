@@ -11,6 +11,8 @@ pub mod stake;
 pub mod unstake;
 pub mod set_stake_authority;
 pub mod adjust_free_stake;
+pub mod set_airdrop_config;
+pub mod claim_airdrop;
 
 pub use initialize::*;
 pub use create_question::*;
@@ -25,3 +27,5 @@ pub use stake::*;
 pub use unstake::*;
 pub use set_stake_authority::*;
 pub use adjust_free_stake::*;
+pub use set_airdrop_config::*;
+pub use claim_airdrop::*;

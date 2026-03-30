@@ -100,4 +100,16 @@ pub mod nara_quest {
     ) -> Result<()> {
         instructions::adjust_free_stake::handler_adjust_free_stake(ctx, delta, reason)
     }
+
+    pub fn set_airdrop_config(
+        ctx: Context<SetAirdropConfig>,
+        airdrop_amount: u64,
+        max_airdrop_count: u32,
+    ) -> Result<()> {
+        instructions::set_airdrop_config::handler_set_airdrop_config(ctx, airdrop_amount, max_airdrop_count)
+    }
+
+    pub fn claim_airdrop(ctx: Context<ClaimAirdrop>) -> Result<()> {
+        instructions::claim_airdrop::handler_claim_airdrop(ctx)
+    }
 }

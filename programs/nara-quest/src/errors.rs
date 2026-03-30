@@ -55,4 +55,19 @@ pub enum QuestError {
 
     #[msg("Free credits overflow")]
     FreeCreditsOverflow,
+
+    #[msg("Not eligible: must answer current round first")]
+    AirdropNotEligible,
+
+    #[msg("Max airdrop count reached for this address")]
+    AirdropMaxReached,
+
+    #[msg("Must wait 24 hours between airdrop claims")]
+    AirdropCooldown,
+
+    #[msg("Airdrop is disabled (amount = 0)")]
+    AirdropDisabled,
+
+    #[msg("Airdrop fund has insufficient balance")]
+    InsufficientAirdrop,
 }

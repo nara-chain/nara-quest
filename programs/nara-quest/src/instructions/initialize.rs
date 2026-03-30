@@ -17,6 +17,8 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     game_config.reward_per_share = 0;
     game_config.extra_reward = 0;
     game_config.stake_authority = Pubkey::default();
+    game_config.airdrop_amount = 0;
+    game_config.max_airdrop_count = 0;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;
