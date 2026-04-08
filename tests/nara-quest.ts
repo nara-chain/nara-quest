@@ -700,7 +700,7 @@ describe("nara-quest", () => {
 
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.winnerCount).to.equal(0);
-      // ±10% rate limit: prev_reward_count=10, target=2, delta=1 → adjusted=9
+      // ±1% rate limit: prev_reward_count=10, target=2, delta=max(0,1)=1 → adjusted=9
       // But min_reward_count=10 clamps it back to 10
       expect(pool.rewardCount).to.equal(10);
     });
@@ -733,7 +733,7 @@ describe("nara-quest", () => {
     });
   });
 
-  describe("reward_count rate limiting (±10%)", () => {
+  describe("reward_count rate limiting (±1%)", () => {
     before(async () => {
       // Lower min_reward_count to 1 so rate limit effect is visible (not masked by min floor)
       await program.methods
@@ -741,7 +741,7 @@ describe("nara-quest", () => {
         .rpc();
     });
 
-    it("decrease is capped at 10% per round", async () => {
+    it("decrease is capped at 1% per round", async () => {
       // State from previous tests: reward_count=10, winner_count=1
       const poolBefore = await program.account.pool.fetch(poolPda);
       expect(poolBefore.rewardCount).to.equal(10);
@@ -761,7 +761,7 @@ describe("nara-quest", () => {
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      // prev_reward_count=10, target=1, max_delta=max(10*10%,1)=1
+      // prev_reward_count=10, target=1, max_delta=max(floor(10*1%)=0,1)=1
       // adjusted = clamp(1, 9, 11) = 9 (not 1!)
       expect(pool.rewardCount).to.equal(9);
     });
@@ -782,7 +782,7 @@ describe("nara-quest", () => {
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      // prev_reward_count=9, target=0, max_delta=max(floor(9*10%)=0,1)=1
+      // prev_reward_count=9, target=0, max_delta=max(floor(9*1%)=0,1)=1
       // adjusted = clamp(0, 8, 10) = 8
       expect(pool.rewardCount).to.equal(8);
     });
@@ -1382,7 +1382,7 @@ describe("nara-quest", () => {
 
       const pool = await program.account.pool.fetch(poolPda);
 
-      // ±10% rate limit: prev=10, target=20, delta=1 → adjusted=11
+      // ±1% rate limit: prev=10, target=20, delta=max(0,1)=1 → adjusted=11
       // max_reward_count=10 clamps it to 10
       expect(pool.rewardCount).to.equal(MAX_REWARD);
 

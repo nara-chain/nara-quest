@@ -38,7 +38,7 @@ pub fn handler_create_question(
         }
     }
 
-    // Calculate reward_count: target is prev_winner_count, but capped to ±10% change per round
+    // Calculate reward_count: target is prev_winner_count, but capped to ±1% change per round
     let pool = &mut ctx.accounts.pool;
     let min_reward_count = game_config.min_reward_count;
     let max_reward_count = game_config.max_reward_count;
@@ -49,7 +49,7 @@ pub fn handler_create_question(
         // First round: no previous baseline, use target directly
         target
     } else {
-        // ±10% rate limit (min delta = 1 to avoid getting stuck at small values)
+        // ±1% rate limit (min delta = 1 to avoid getting stuck at small values)
         let max_delta = (prev_reward_count as u64 * REWARD_ADJUST_BPS as u64 / BPS_BASE) as u32;
         let max_delta = if max_delta == 0 { 1 } else { max_delta };
         let upper = prev_reward_count.saturating_add(max_delta);
