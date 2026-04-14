@@ -60,11 +60,11 @@ pub fn handler_submit_answer(
     let user_stake = ctx.accounts.stake_token_account.amount;
     let game_config = &ctx.accounts.game_config;
 
-    // Stake check (before recording winner): only activated at capacity
+    // Stake check (before recording winner): activated when reward_count > 50% of max
     let pool = &mut ctx.accounts.pool;
     let mut used_free_stake = false;
 
-    if pool.reward_count >= game_config.max_reward_count {
+    if pool.reward_count > game_config.max_reward_count / 2 {
         let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
         let decay = game_config.decay_ms;
 
