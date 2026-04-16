@@ -43,8 +43,15 @@ pub mod nara_quest {
         instructions::transfer_authority::handler_transfer_authority(ctx, new_authority)
     }
 
-    pub fn set_reward_config(ctx: Context<SetRewardConfig>, min_reward_count: u32, max_reward_count: u32) -> Result<()> {
-        instructions::set_reward_config::handler_set_reward_config(ctx, min_reward_count, max_reward_count)
+    pub fn set_reward_config(
+        ctx: Context<SetRewardConfig>,
+        min_reward_count: u32,
+        max_reward_count: u32,
+        free_stake_multiplier: u32,
+    ) -> Result<()> {
+        instructions::set_reward_config::handler_set_reward_config(
+            ctx, min_reward_count, max_reward_count, free_stake_multiplier,
+        )
     }
 
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {

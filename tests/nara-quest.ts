@@ -276,8 +276,8 @@ describe("nara-quest", () => {
 
       const pool = await program.account.pool.fetch(poolPda);
       expect(pool.round.toNumber()).to.equal(0);
-      expect(pool.winnerCount).to.equal(0);
-      expect(pool.rewardCount).to.equal(0);
+      expect(pool.stakeWinnerCount).to.equal(0);
+      expect(pool.stakeRewardCount).to.equal(0);
       expect(pool.stakeHigh.toNumber()).to.equal(0);
       expect(pool.stakeLow.toNumber()).to.equal(0);
       expect(pool.avgParticipantStake.toNumber()).to.equal(0);
@@ -420,12 +420,13 @@ describe("nara-quest", () => {
       expect(pool.round.toNumber()).to.equal(1);
       expect(pool.question).to.equal("What is the answer to life?");
       expect(pool.difficulty).to.equal(DEFAULT_DIFFICULTY);
-      expect(pool.winnerCount).to.equal(0);
-      expect(pool.rewardCount).to.equal(10);
+      expect(pool.stakeWinnerCount).to.equal(0);
+      expect(pool.stakeRewardCount).to.equal(10);
       // total_reward = reward_per_share * reward_count + extra_reward
       // = 0.1 SOL * 10 + 0 = 1 SOL
       expect(pool.rewardAmount.toNumber()).to.equal(1 * LAMPORTS_PER_SOL);
-      expect(pool.rewardPerWinner.toNumber()).to.equal(REWARD_PER_SHARE);
+      // Half of total_reward goes to stake track: 1 SOL / 2 / 10 = 0.05 SOL per winner
+      expect(pool.stakeRewardPerWinner.toNumber()).to.equal(REWARD_PER_SHARE / 2);
     });
 
     it("quest_authority can create question", async () => {
@@ -569,7 +570,7 @@ describe("nara-quest", () => {
         pool.round.toString()
       );
       const recordPda = winnerRecordPda(program.programId, user1.publicKey);
-      const expectedReward = pool.rewardPerWinner.toNumber();
+      const expectedReward = pool.stakeRewardPerWinner.toNumber();
 
       const user1BalanceBefore = await provider.connection.getBalance(user1.publicKey);
 
@@ -581,11 +582,14 @@ describe("nara-quest", () => {
             payer: sponsor.publicKey,
             wsolMint: NATIVE_MINT,
           })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
           .signers([sponsor])
           .rpc();
 
         const poolAfter = await program.account.pool.fetch(poolPda);
-        expect(poolAfter.winnerCount).to.equal(1);
+        expect(poolAfter.stakeWinnerCount).to.equal(1);
 
         const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
         expect(winnerRecord.round.toNumber()).to.equal(pool.round.toNumber());
@@ -595,7 +599,7 @@ describe("nara-quest", () => {
         expect(balanceDiff).to.equal(expectedReward);
 
         console.log(
-          `    User1 received ${expectedReward / LAMPORTS_PER_SOL} SOL instant reward (1/${pool.rewardCount} of total)`
+          `    User1 received ${expectedReward / LAMPORTS_PER_SOL} SOL instant reward (1/${pool.stakeRewardCount} of total)`
         );
       } catch (err: unknown) {
         if (err && typeof err === "object" && "logs" in err) {
@@ -616,7 +620,7 @@ describe("nara-quest", () => {
         user2.publicKey,
         pool.round.toString()
       );
-      const expectedReward = pool.rewardPerWinner.toNumber();
+      const expectedReward = pool.stakeRewardPerWinner.toNumber();
 
       await program.methods
         .submitAnswer(proofA, proofB, proofC, TEST_AGENT, TEST_MODEL)
@@ -625,11 +629,14 @@ describe("nara-quest", () => {
           payer: sponsor.publicKey,
           wsolMint: NATIVE_MINT,
         })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ])
         .signers([sponsor])
         .rpc();
 
       const poolAfter = await program.account.pool.fetch(poolPda);
-      expect(poolAfter.winnerCount).to.equal(2);
+      expect(poolAfter.stakeWinnerCount).to.equal(2);
 
       const user2Balance = await provider.connection.getBalance(user2.publicKey);
       expect(user2Balance).to.equal(expectedReward);
@@ -670,6 +677,9 @@ describe("nara-quest", () => {
             payer: sponsor.publicKey,
             wsolMint: NATIVE_MINT,
           })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
           .signers([sponsor])
           .rpc();
         expect.fail("should have thrown");
@@ -682,7 +692,7 @@ describe("nara-quest", () => {
   describe("pool round and reward_count from previous round", () => {
     it("creates new question, reward_count = max(prev_winner_count, 10)", async () => {
       const poolBefore = await program.account.pool.fetch(poolPda);
-      expect(poolBefore.winnerCount).to.equal(2);
+      expect(poolBefore.stakeWinnerCount).to.equal(2);
 
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
 
@@ -699,10 +709,10 @@ describe("nara-quest", () => {
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      expect(pool.winnerCount).to.equal(0);
+      expect(pool.stakeWinnerCount).to.equal(0);
       // ±1% rate limit: prev_reward_count=10, target=2, delta=max(0,1)=1 → adjusted=9
       // But min_reward_count=10 clamps it back to 10
-      expect(pool.rewardCount).to.equal(10);
+      expect(pool.stakeRewardCount).to.equal(10);
     });
 
     it("user1 can answer again in new round (same PDA reused)", async () => {
@@ -721,11 +731,14 @@ describe("nara-quest", () => {
           user: user1.publicKey,
           payer: sponsor.publicKey,
         })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ])
         .signers([sponsor])
         .rpc();
 
       const poolAfter = await program.account.pool.fetch(poolPda);
-      expect(poolAfter.winnerCount).to.equal(1);
+      expect(poolAfter.stakeWinnerCount).to.equal(1);
 
       const recordPda = winnerRecordPda(program.programId, user1.publicKey);
       const winnerRecord = await program.account.winnerRecord.fetch(recordPda);
@@ -737,15 +750,15 @@ describe("nara-quest", () => {
     before(async () => {
       // Lower min_reward_count to 1 so rate limit effect is visible (not masked by min floor)
       await program.methods
-        .setRewardConfig(1, 10000)
+        .setRewardConfig(1, 10000, 10)
         .rpc();
     });
 
     it("decrease is capped at 1% per round", async () => {
       // State from previous tests: reward_count=10, winner_count=1
       const poolBefore = await program.account.pool.fetch(poolPda);
-      expect(poolBefore.rewardCount).to.equal(10);
-      expect(poolBefore.winnerCount).to.equal(1);
+      expect(poolBefore.stakeRewardCount).to.equal(10);
+      expect(poolBefore.stakeWinnerCount).to.equal(1);
 
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
       await program.methods
@@ -763,7 +776,7 @@ describe("nara-quest", () => {
       const pool = await program.account.pool.fetch(poolPda);
       // prev_reward_count=10, target=1, max_delta=max(floor(10*1%)=0,1)=1
       // adjusted = clamp(1, 9, 11) = 9 (not 1!)
-      expect(pool.rewardCount).to.equal(9);
+      expect(pool.stakeRewardCount).to.equal(9);
     });
 
     it("continues to decrease gradually each round", async () => {
@@ -784,13 +797,13 @@ describe("nara-quest", () => {
       const pool = await program.account.pool.fetch(poolPda);
       // prev_reward_count=9, target=0, max_delta=max(floor(9*1%)=0,1)=1
       // adjusted = clamp(0, 8, 10) = 8
-      expect(pool.rewardCount).to.equal(8);
+      expect(pool.stakeRewardCount).to.equal(8);
     });
 
     it("min_reward_count floor is still enforced after rate limiting", async () => {
       // Set min_reward_count = 8 (equal to current reward_count)
       await program.methods
-        .setRewardConfig(8, 10000)
+        .setRewardConfig(8, 10000, 10)
         .rpc();
 
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
@@ -809,13 +822,13 @@ describe("nara-quest", () => {
       const pool = await program.account.pool.fetch(poolPda);
       // Rate limit: prev=8, target=0, delta=1 → adjusted=7
       // But min_reward_count=8 clamps it back to 8
-      expect(pool.rewardCount).to.equal(8);
+      expect(pool.stakeRewardCount).to.equal(8);
     });
 
     after(async () => {
       // Restore original config for subsequent tests
       await program.methods
-        .setRewardConfig(10, 16384)
+        .setRewardConfig(10, 16384, 10)
         .rpc();
     });
   });
@@ -914,7 +927,7 @@ describe("nara-quest", () => {
   describe("set_reward_config", () => {
     it("authority can set reward config", async () => {
       await program.methods
-        .setRewardConfig(20, 500)
+        .setRewardConfig(20, 500, 10)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
@@ -925,7 +938,7 @@ describe("nara-quest", () => {
     it("fails if non-authority tries to set", async () => {
       try {
         await program.methods
-          .setRewardConfig(10, 100)
+          .setRewardConfig(10, 100, 10)
           .accountsPartial({
             authority: user1.publicKey,
           })
@@ -940,7 +953,7 @@ describe("nara-quest", () => {
     it("fails if min is 0", async () => {
       try {
         await program.methods
-          .setRewardConfig(0, 1000)
+          .setRewardConfig(0, 1000, 10)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -951,7 +964,7 @@ describe("nara-quest", () => {
     it("fails if min > max", async () => {
       try {
         await program.methods
-          .setRewardConfig(2000, 100)
+          .setRewardConfig(2000, 100, 10)
           .rpc();
         expect.fail("should have thrown");
       } catch (err) {
@@ -961,7 +974,7 @@ describe("nara-quest", () => {
 
     it("restores default reward config", async () => {
       await program.methods
-        .setRewardConfig(10, 1000)
+        .setRewardConfig(10, 1000, 10)
         .rpc();
 
       const gameConfig = await program.account.gameConfig.fetch(gameConfigPda);
@@ -1240,7 +1253,7 @@ describe("nara-quest", () => {
     before(async () => {
       // Set max_reward_count = 10 so staking activates after 10 winners
       await program.methods
-        .setRewardConfig(MAX_REWARD, MAX_REWARD)
+        .setRewardConfig(MAX_REWARD, MAX_REWARD, 10)
         .rpc();
 
       // Use default bps values; decay=2s is fine since test runs instantly
@@ -1280,7 +1293,7 @@ describe("nara-quest", () => {
       }
     });
 
-    it("round 1: all 20 users answer, first 10 get rewards (no staking requirement)", async () => {
+    it("round 1: all 20 users answer, all get rewards (no staking requirement; budget halved)", async () => {
       // Create question for round 1
       const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
       await program.methods
@@ -1296,7 +1309,7 @@ describe("nara-quest", () => {
         .rpc();
 
       const pool = await program.account.pool.fetch(poolPda);
-      expect(pool.rewardCount).to.equal(MAX_REWARD);
+      expect(pool.stakeRewardCount).to.equal(MAX_REWARD);
       // First round after previous tests: stake_high/low should be 0 (no prev avg)
       expect(pool.stakeHigh.toNumber()).to.equal(0);
       expect(pool.stakeLow.toNumber()).to.equal(0);
@@ -1343,11 +1356,13 @@ describe("nara-quest", () => {
         if (balancesAfter[i] > balancesBefore[i]) rewardedCount++;
       }
 
-      expect(rewardedCount).to.equal(MAX_REWARD);
+      // With dual-track split, stake_reward_per_winner = reward_per_share/2 (0.05 SOL)
+      // and beyond-limit = reward_per_share/2 too, so all 20 fit in 1 SOL vault
+      expect(rewardedCount).to.equal(NUM_USERS);
 
       const poolAfter = await program.account.pool.fetch(poolPda);
       // Round 1: stake_high/low=0, so all users pass stake check; winner_count = NUM_USERS
-      expect(poolAfter.winnerCount).to.equal(NUM_USERS);
+      expect(poolAfter.stakeWinnerCount).to.equal(NUM_USERS);
 
       // avg_participant_stake should reflect all 20 answerers' stakes
       // Formula: sum(user_stake / reward_count) for all answerers
@@ -1384,7 +1399,7 @@ describe("nara-quest", () => {
 
       // ±1% rate limit: prev=10, target=20, delta=max(0,1)=1 → adjusted=11
       // max_reward_count=10 clamps it to 10
-      expect(pool.rewardCount).to.equal(MAX_REWARD);
+      expect(pool.stakeRewardCount).to.equal(MAX_REWARD);
 
       // Staking parameters should be derived from prevAvg
       const expectedHigh = Math.floor(prevAvg * 100_000 / 10_000); // 10x
@@ -1444,8 +1459,8 @@ describe("nara-quest", () => {
       }
 
       const poolFinal = await program.account.pool.fetch(poolPda);
-      // winnerCount only includes users who met stake requirement (slot not consumed otherwise)
-      expect(poolFinal.winnerCount).to.equal(rewardedCount);
+      // stakeWinnerCount only includes users who met stake requirement (slot not consumed otherwise)
+      expect(poolFinal.stakeWinnerCount).to.equal(rewardedCount);
 
       // With staking active, users with insufficient stake should be rejected
       // Zero-stake users (odd indices) should never get rewards
@@ -1460,7 +1475,7 @@ describe("nara-quest", () => {
     after(async () => {
       // Restore reward config defaults
       await program.methods
-        .setRewardConfig(10, 1000)
+        .setRewardConfig(10, 1000, 10)
         .rpc();
     });
   });
@@ -1597,7 +1612,7 @@ describe("nara-quest", () => {
     describe("submit_answer with free credits", () => {
       before(async () => {
         // Force staking activation: min=max=10
-        await program.methods.setRewardConfig(10, 10).rpc();
+        await program.methods.setRewardConfig(10, 10, 10).rpc();
 
         // Grant 2 free credits to freeUser
         await program.methods
@@ -1628,7 +1643,7 @@ describe("nara-quest", () => {
       it("user with free credits bypasses stake check, credit decremented on reward", async () => {
         const pool = await program.account.pool.fetch(poolPda);
         // Staking should be active
-        expect(pool.rewardCount).to.equal(10);
+        expect(pool.stakeRewardCount).to.equal(10);
 
         const { proofA, proofB, proofC } = await generateProof(
           snarkjs, TEST_ANSWER, answerHashStr,
@@ -1661,15 +1676,15 @@ describe("nara-quest", () => {
         expect(record.freeCredits).to.equal(1);
       });
 
-      it("does not consume free credits when staking is not active", async () => {
+      it("free credits consumed on free track regardless of staking activation", async () => {
         // Widen max so staking deactivates
-        await program.methods.setRewardConfig(10, 1000).rpc();
+        await program.methods.setRewardConfig(10, 1000, 10).rpc();
 
-        // Create new round (staking NOT active since reward_count < 1000)
+        // Create new round (staking NOT active since reward_count < max/2)
         const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
         await program.methods
           .createQuestion(
-            "Free stake no-consume test",
+            "Free track no-staking test",
             answerHashOnChain,
             deadline,
             DEFAULT_DIFFICULTY
@@ -1678,7 +1693,9 @@ describe("nara-quest", () => {
           .rpc();
 
         const pool = await program.account.pool.fetch(poolPda);
-        expect(pool.rewardCount).to.be.lessThan(1000); // staking NOT active
+        expect(pool.stakeRewardCount).to.be.lessThan(1000);
+        // Even without staking activation, free slots exist and credit is consumed
+        expect(pool.freeRewardCount).to.be.greaterThan(0);
 
         const { proofA, proofB, proofC } = await generateProof(
           snarkjs, TEST_ANSWER, answerHashStr,
@@ -1698,15 +1715,15 @@ describe("nara-quest", () => {
           .signers([sponsor])
           .rpc();
 
-        // Credits should still be 1 (not consumed when staking is inactive)
+        // Credit consumed (free track used): 1 → 0
         const record = await program.account.stakeRecord.fetch(
           stakeRecordPda(freeUser.publicKey)
         );
-        expect(record.freeCredits).to.equal(1);
+        expect(record.freeCredits).to.equal(0);
       });
 
       after(async () => {
-        await program.methods.setRewardConfig(10, 1000).rpc();
+        await program.methods.setRewardConfig(10, 1000, 10).rpc();
       });
     });
   });
@@ -1945,6 +1962,70 @@ describe("nara-quest", () => {
           `total=${balAfterAnswer / LAMPORTS_PER_SOL} SOL`
         );
       });
+    });
+  });
+
+  describe("dual-track reward split", () => {
+    it("pool fields are correctly split: free_slots = stake_slots/X, free_reward = X × stake_reward", async () => {
+      // X=10 (default)
+      await program.methods.setRewardConfig(10, 1000, 10).rpc();
+      await fundTreasury(5 * LAMPORTS_PER_SOL);
+
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "Dual-track split test",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({ caller: authority.publicKey })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+      const X = 10;
+
+      // free_reward_count = stake_reward_count / X
+      expect(pool.freeRewardCount).to.equal(Math.floor(pool.stakeRewardCount / X));
+
+      // free_reward_per_winner = X × stake_reward_per_winner
+      expect(pool.freeRewardPerWinner.toNumber()).to.equal(
+        pool.stakeRewardPerWinner.toNumber() * X
+      );
+
+      // Budget conservation: stake_slots × stake_per_winner + free_slots × free_per_winner = reward_amount (±integer rounding)
+      const stakeTotal = pool.stakeRewardCount * pool.stakeRewardPerWinner.toNumber();
+      const freeTotal = pool.freeRewardCount * pool.freeRewardPerWinner.toNumber();
+      const totalDistributable = stakeTotal + freeTotal;
+      // Allow small rounding from integer division
+      expect(Math.abs(totalDistributable - pool.rewardAmount.toNumber())).to.be.lessThan(pool.stakeRewardCount + 1);
+    });
+
+    it("X=1 degenerate: free_reward_per_winner equals stake_reward_per_winner", async () => {
+      // With X=1, free track has same per-winner amount as stake track
+      await program.methods.setRewardConfig(10, 1000, 1).rpc();
+      await fundTreasury(2 * LAMPORTS_PER_SOL);
+
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
+      await program.methods
+        .createQuestion(
+          "X=1 degenerate test",
+          answerHashOnChain,
+          deadline,
+          DEFAULT_DIFFICULTY
+        )
+        .accountsPartial({ caller: authority.publicKey })
+        .rpc();
+
+      const pool = await program.account.pool.fetch(poolPda);
+
+      // X=1: free_slots = stake_slots / 1 = stake_slots
+      expect(pool.freeRewardCount).to.equal(pool.stakeRewardCount);
+      // X=1: free per-winner = 1 × stake per-winner = stake per-winner
+      expect(pool.freeRewardPerWinner.toNumber()).to.equal(pool.stakeRewardPerWinner.toNumber());
+
+      // Restore default X=10
+      await program.methods.setRewardConfig(10, 1000, 10).rpc();
     });
   });
 });

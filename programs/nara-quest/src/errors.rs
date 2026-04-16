@@ -70,4 +70,7 @@ pub enum QuestError {
 
     #[msg("Airdrop fund has insufficient balance")]
     InsufficientAirdrop,
+
+    #[msg("Multiplier must be >= 1")]
+    InvalidMultiplier,
 }

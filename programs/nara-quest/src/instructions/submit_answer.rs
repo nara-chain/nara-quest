@@ -60,32 +60,44 @@ pub fn handler_submit_answer(
     let user_stake = ctx.accounts.stake_token_account.amount;
     let game_config = &ctx.accounts.game_config;
 
-    // Stake check (before recording winner): activated when reward_count > 50% of max
+    // Dual-track dispatch: prefer free track if credits + slot available, else stake track
     let pool = &mut ctx.accounts.pool;
-    let mut used_free_stake = false;
+    let has_credits = ctx.accounts.stake_record.free_credits > 0;
+    let free_track_available = has_credits
+        && pool.free_reward_count > 0
+        && pool.free_winner_count < pool.free_reward_count;
+    let staking_activated = pool.stake_reward_count > game_config.max_reward_count / 2;
 
-    if pool.reward_count > game_config.max_reward_count / 2 {
-        let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
-        let decay = game_config.decay_ms;
+    let (use_free_track, reward_lamports) = if free_track_available {
+        // Free track: slot available, fixed X × reward (no beyond-limit branch)
+        (true, pool.free_reward_per_winner)
+    } else {
+        // Stake track: enforce stake check if activated
+        if staking_activated {
+            let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
+            let decay = game_config.decay_ms;
 
-        let effective_req = if decay <= 0 || elapsed_ms >= decay {
-            pool.stake_low
-        } else {
-            let range = pool.stake_high.saturating_sub(pool.stake_low);
-            let elapsed_u = elapsed_ms as u64;
-            let decay_u = decay as u64;
-            pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
-        };
+            let effective_req = if decay <= 0 || elapsed_ms >= decay {
+                pool.stake_low
+            } else {
+                let range = pool.stake_high.saturating_sub(pool.stake_low);
+                let elapsed_u = elapsed_ms as u64;
+                let decay_u = decay as u64;
+                pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
+            };
 
-        if user_stake >= effective_req {
-            // Sufficient stake, pass normally
-        } else if ctx.accounts.stake_record.free_credits > 0 {
-            // Insufficient stake but has free credits, bypass stake check
-            used_free_stake = true;
-        } else {
-            return err!(QuestError::InsufficientStake);
+            require!(user_stake >= effective_req, QuestError::InsufficientStake);
         }
-    }
+
+        let will_be_winner = pool.stake_winner_count.saturating_add(1);
+        let reward = if will_be_winner <= pool.stake_reward_count {
+            pool.stake_reward_per_winner
+        } else {
+            // beyond-limit 保底：reward_per_share 对半（与 stake 轨道金额级别一致，避免倒挂）
+            game_config.reward_per_share / 2
+        };
+        (false, reward)
+    };
 
     // Record winner (init_if_needed + round check ensures no duplicates per round)
     let pool_round = ctx.accounts.pool.round;
@@ -93,21 +105,18 @@ pub fn handler_submit_answer(
     require!(winner_record.round != pool_round, QuestError::AlreadyAnswered);
     winner_record.round = pool_round;
 
-    // Increment winner count and accumulate avg_participant_stake
+    // Increment appropriate winner count + accumulate avg_participant_stake (stake track only)
     let pool = &mut ctx.accounts.pool;
-    pool.winner_count += 1;
-    if pool.reward_count > 0 {
-        pool.avg_participant_stake = pool
-            .avg_participant_stake
-            .saturating_add(user_stake / pool.reward_count as u64);
-    }
-
-    // Determine reward: full reward if within limit, base reward (reward_per_share) otherwise
-    let reward_lamports = if pool.winner_count <= pool.reward_count {
-        pool.reward_per_winner
+    if use_free_track {
+        pool.free_winner_count += 1;
     } else {
-        game_config.reward_per_share
-    };
+        pool.stake_winner_count += 1;
+        if pool.stake_reward_count > 0 {
+            pool.avg_participant_stake = pool
+                .avg_participant_stake
+                .saturating_add(user_stake / pool.stake_reward_count as u64);
+        }
+    }
 
     // Transfer reward from vault PDA to user (skip if vault has insufficient balance)
     let vault_info = ctx.accounts.vault.to_account_info();
@@ -135,26 +144,33 @@ pub fn handler_submit_answer(
         )?;
     }
 
-    // Consume free stake credit only when: stake check was active + bypassed + reward received
-    if actual_reward > 0 && used_free_stake {
+    // Consume free stake credit when: used free track + reward received
+    if actual_reward > 0 && use_free_track {
         let stake_record = &mut ctx.accounts.stake_record;
         stake_record.free_credits -= 1;
         msg!("Free stake credit consumed, remaining: {}", stake_record.free_credits);
     }
 
-    if pool.winner_count <= pool.reward_count {
+    if use_free_track {
         msg!(
-            "Answer verified, reward {} lamports (winner {}/{})",
+            "Answer verified, free-track reward {} lamports (free winner {}/{})",
             actual_reward,
-            pool.winner_count,
-            pool.reward_count
+            pool.free_winner_count,
+            pool.free_reward_count
+        );
+    } else if pool.stake_winner_count <= pool.stake_reward_count {
+        msg!(
+            "Answer verified, stake reward {} lamports (stake winner {}/{})",
+            actual_reward,
+            pool.stake_winner_count,
+            pool.stake_reward_count
         );
     } else {
         msg!(
-            "Answer verified, base reward {} lamports (winner {}/{}, exceeded reward limit, base reward only)",
+            "Answer verified, base reward {} lamports (stake winner {}/{}, exceeded limit)",
             actual_reward,
-            pool.winner_count,
-            pool.reward_count
+            pool.stake_winner_count,
+            pool.stake_reward_count
         );
     }
 

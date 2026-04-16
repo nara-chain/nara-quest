@@ -17,5 +17,6 @@ pub struct GameConfig {
     pub stake_authority: Pubkey,
     pub airdrop_amount: u64,
     pub max_airdrop_count: u32,
-    pub _padding: [u8; 20],
+    pub free_stake_multiplier: u32,
+    pub _padding: [u8; 16],
 }

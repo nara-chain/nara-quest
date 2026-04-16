@@ -19,15 +19,20 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
     game_config.stake_authority = Pubkey::default();
     game_config.airdrop_amount = 0;
     game_config.max_airdrop_count = 0;
+    game_config.free_stake_multiplier = DEFAULT_FREE_STAKE_MULTIPLIER;
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;
-    pool.winner_count = 0;
-    pool.reward_count = 0;
+    pool.stake_winner_count = 0;
+    pool.stake_reward_count = 0;
+    pool.stake_reward_per_winner = 0;
     pool.created_at = 0;
     pool.stake_high = 0;
     pool.stake_low = 0;
     pool.avg_participant_stake = 0;
+    pool.free_reward_count = 0;
+    pool.free_reward_per_winner = 0;
+    pool.free_winner_count = 0;
 
     msg!("Nara Quest initialized");
     Ok(())
