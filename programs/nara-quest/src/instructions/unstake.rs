@@ -10,14 +10,17 @@ pub fn handler_unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
         return Ok(());
     }
 
-    let stake_record = &ctx.accounts.stake_record;
     let pool = &ctx.accounts.pool;
+    let stake_round = ctx.accounts.stake_record.stake_round;
 
     // Can unstake if round advanced OR deadline passed
     let clock = Clock::get()?;
-    let can_unstake = pool.round > stake_record.stake_round
+    let can_unstake = pool.round > stake_round
         || (pool.deadline > 0 && clock.unix_timestamp > pool.deadline);
     require!(can_unstake, QuestError::UnstakeNotReady);
+
+    // Persist user pubkey (for indexing)
+    ctx.accounts.stake_record.user_pubkey = ctx.accounts.user.key();
 
     // Check sufficient WSOL balance
     require!(ctx.accounts.stake_token_account.amount >= amount, QuestError::InsufficientStakeBalance);

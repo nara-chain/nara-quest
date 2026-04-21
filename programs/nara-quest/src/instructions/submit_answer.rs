@@ -105,6 +105,9 @@ pub fn handler_submit_answer(
     require!(winner_record.round != pool_round, QuestError::AlreadyAnswered);
     winner_record.round = pool_round;
 
+    // Persist user pubkey on stake_record (for indexing)
+    ctx.accounts.stake_record.user_pubkey = ctx.accounts.user.key();
+
     // Increment appropriate winner count + accumulate avg_participant_stake (stake track only)
     let pool = &mut ctx.accounts.pool;
     if use_free_track {

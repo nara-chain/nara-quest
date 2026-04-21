@@ -32,6 +32,7 @@ pub fn handler_stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
 
     let stake_record = &mut ctx.accounts.stake_record;
     stake_record.stake_round = ctx.accounts.pool.round;
+    stake_record.user_pubkey = ctx.accounts.user.key();
 
     msg!("Staked {} lamports as WSOL", amount);
     Ok(())

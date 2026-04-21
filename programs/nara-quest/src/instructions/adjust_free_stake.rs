@@ -22,6 +22,8 @@ pub fn handler_adjust_free_stake(
         stake_record.free_credits = old_credits.saturating_sub(delta.unsigned_abs());
     }
 
+    stake_record.user_pubkey = ctx.accounts.user.key();
+
     msg!(
         "Free stake adjusted: user={}, delta={}, credits={}->{}, reason={}",
         ctx.accounts.user.key(),
