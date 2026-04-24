@@ -38,21 +38,14 @@ pub fn handler_create_question(
         }
     }
 
-    // Calculate stake_reward_count: target based on previous round's effective demand
-    // target = (stake_winner + X × free_winner) / 2 (budget consumption ratio)
+    // Calculate stake_reward_count: single-track boost PoMI
+    // target = prev winner_count (pre-split logic)
     let pool = &mut ctx.accounts.pool;
     let min_reward_count = game_config.min_reward_count;
     let max_reward_count = game_config.max_reward_count;
-    let x = game_config.free_stake_multiplier.max(1) as u64;
     let prev_reward_count = pool.stake_reward_count;
 
-    let prev_stake_winners = pool.stake_winner_count as u64;
-    let prev_free_winners = pool.free_winner_count as u64;
-    let target = prev_stake_winners
-        .saturating_add(prev_free_winners.saturating_mul(x))
-        .checked_div(2)
-        .unwrap_or(0)
-        .min(u32::MAX as u64) as u32;
+    let target = pool.stake_winner_count;
 
     let adjusted = if prev_reward_count == 0 {
         // First round: no previous baseline, use target directly
@@ -110,17 +103,13 @@ pub fn handler_create_question(
         )?;
     }
 
-    // Split total reward in half: stake track gets half, free track gets half
-    // stake_reward_per_winner = (total/2) / stake_reward_count
-    // free_reward_count = stake_reward_count / X
-    // free_reward_per_winner = X * stake_reward_per_winner
-    // Odd lamports from division remain in vault for next round
-    let half = total_reward / 2;
-    let stake_reward_per_winner = half / stake_reward_count as u64;
-    let free_reward_count = stake_reward_count / x as u32;
-    let free_reward_per_winner = stake_reward_per_winner.saturating_mul(x);
+    // Single-track boost PoMI reward (pre-split formula)
+    // reward_per_winner = reward_per_share + extra_reward / stake_reward_count
+    // Integer division remainder stays in vault for next round
+    let extra_per_winner = extra_reward / stake_reward_count as u64;
+    let stake_reward_per_winner = reward_per_share.saturating_add(extra_per_winner);
 
-    // Calculate staking parameters from previous round's avg_participant_stake
+    // stake_high/low kept for backward-compat of staking instruction; reflect last avg
     let prev_avg = pool.avg_participant_stake;
     let stake_high = prev_avg.saturating_mul(game_config.stake_bps_high) / BPS_BASE;
     let stake_low = prev_avg.saturating_mul(game_config.stake_bps_low) / BPS_BASE;
@@ -134,8 +123,9 @@ pub fn handler_create_question(
     pool.stake_reward_count = stake_reward_count;
     pool.stake_reward_per_winner = stake_reward_per_winner;
     pool.stake_winner_count = 0;
-    pool.free_reward_count = free_reward_count;
-    pool.free_reward_per_winner = free_reward_per_winner;
+    // Deprecated free track fields: write zero
+    pool.free_reward_count = 0;
+    pool.free_reward_per_winner = 0;
     pool.free_winner_count = 0;
     pool.difficulty = difficulty;
     pool.created_at = clock.unix_timestamp;
@@ -144,12 +134,10 @@ pub fn handler_create_question(
     pool.avg_participant_stake = 0;
 
     msg!(
-        "Quest created (round {}, stake_slots={}, stake_reward={}, free_slots={}, free_reward={})",
+        "Quest created (round {}, boost_slots={}, boost_reward={})",
         pool.round,
         stake_reward_count,
         stake_reward_per_winner,
-        free_reward_count,
-        free_reward_per_winner,
     );
     Ok(())
 }

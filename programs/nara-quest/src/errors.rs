@@ -53,8 +53,8 @@ pub enum QuestError {
     #[msg("Delta must not be zero")]
     InvalidDelta,
 
-    #[msg("Free credits overflow")]
-    FreeCreditsOverflow,
+    #[msg("Boost credits overflow")]
+    BoostCreditsOverflow,
 
     #[msg("Not eligible: must answer current round first")]
     AirdropNotEligible,
@@ -73,4 +73,7 @@ pub enum QuestError {
 
     #[msg("Multiplier must be >= 1")]
     InvalidMultiplier,
+
+    #[msg("Boost PoMI requires free credits")]
+    NoCredits,
 }

@@ -56,47 +56,23 @@ pub fn handler_submit_answer(
         QuestError::InvalidProof
     })?;
 
-    // User's staked amount = WSOL balance in their stake token account
+    // User's staked amount = WSOL balance in their stake token account (for avg accumulation only)
     let user_stake = ctx.accounts.stake_token_account.amount;
     let game_config = &ctx.accounts.game_config;
 
-    // Dual-track dispatch: prefer free track if credits + slot available, else stake track
+    // Boost PoMI: credit is the sole admission ticket
+    require!(
+        ctx.accounts.stake_record.boost_credits > 0,
+        QuestError::NoCredits
+    );
+
     let pool = &mut ctx.accounts.pool;
-    let has_credits = ctx.accounts.stake_record.free_credits > 0;
-    let free_track_available = has_credits
-        && pool.free_reward_count > 0
-        && pool.free_winner_count < pool.free_reward_count;
-    let staking_activated = pool.stake_reward_count > game_config.max_reward_count / 2;
-
-    let (use_free_track, reward_lamports) = if free_track_available {
-        // Free track: slot available, fixed X × reward (no beyond-limit branch)
-        (true, pool.free_reward_per_winner)
+    let will_be_winner = pool.stake_winner_count.saturating_add(1);
+    let reward_lamports = if will_be_winner <= pool.stake_reward_count {
+        pool.stake_reward_per_winner
     } else {
-        // Stake track: enforce stake check if activated
-        if staking_activated {
-            let elapsed_ms = clock.unix_timestamp.saturating_sub(pool.created_at).saturating_mul(1000);
-            let decay = game_config.decay_ms;
-
-            let effective_req = if decay <= 0 || elapsed_ms >= decay {
-                pool.stake_low
-            } else {
-                let range = pool.stake_high.saturating_sub(pool.stake_low);
-                let elapsed_u = elapsed_ms as u64;
-                let decay_u = decay as u64;
-                pool.stake_high.saturating_sub(range.saturating_mul(elapsed_u).saturating_mul(elapsed_u) / (decay_u * decay_u))
-            };
-
-            require!(user_stake >= effective_req, QuestError::InsufficientStake);
-        }
-
-        let will_be_winner = pool.stake_winner_count.saturating_add(1);
-        let reward = if will_be_winner <= pool.stake_reward_count {
-            pool.stake_reward_per_winner
-        } else {
-            // beyond-limit 保底：reward_per_share 对半（与 stake 轨道金额级别一致，避免倒挂）
-            game_config.reward_per_share / 2
-        };
-        (false, reward)
+        // beyond-limit base reward (pre-split formula)
+        game_config.reward_per_share
     };
 
     // Record winner (init_if_needed + round check ensures no duplicates per round)
@@ -108,17 +84,13 @@ pub fn handler_submit_answer(
     // Persist user pubkey on stake_record (for indexing)
     ctx.accounts.stake_record.user_pubkey = ctx.accounts.user.key();
 
-    // Increment appropriate winner count + accumulate avg_participant_stake (stake track only)
+    // Increment winner count + accumulate avg_participant_stake
     let pool = &mut ctx.accounts.pool;
-    if use_free_track {
-        pool.free_winner_count += 1;
-    } else {
-        pool.stake_winner_count += 1;
-        if pool.stake_reward_count > 0 {
-            pool.avg_participant_stake = pool
-                .avg_participant_stake
-                .saturating_add(user_stake / pool.stake_reward_count as u64);
-        }
+    pool.stake_winner_count += 1;
+    if pool.stake_reward_count > 0 {
+        pool.avg_participant_stake = pool
+            .avg_participant_stake
+            .saturating_add(user_stake / pool.stake_reward_count as u64);
     }
 
     // Transfer reward from vault PDA to user (skip if vault has insufficient balance)
@@ -147,33 +119,22 @@ pub fn handler_submit_answer(
         )?;
     }
 
-    // Consume free stake credit when: used free track + reward received
-    if actual_reward > 0 && use_free_track {
+    // Consume 1 credit on successful reward
+    if actual_reward > 0 {
         let stake_record = &mut ctx.accounts.stake_record;
-        stake_record.free_credits -= 1;
-        msg!("Free stake credit consumed, remaining: {}", stake_record.free_credits);
-    }
-
-    if use_free_track {
+        stake_record.boost_credits -= 1;
         msg!(
-            "Answer verified, free-track reward {} lamports (free winner {}/{})",
-            actual_reward,
-            pool.free_winner_count,
-            pool.free_reward_count
-        );
-    } else if pool.stake_winner_count <= pool.stake_reward_count {
-        msg!(
-            "Answer verified, stake reward {} lamports (stake winner {}/{})",
+            "Boost PoMI reward {} lamports (winner {}/{}, credits remaining: {})",
             actual_reward,
             pool.stake_winner_count,
-            pool.stake_reward_count
+            pool.stake_reward_count,
+            stake_record.boost_credits,
         );
     } else {
         msg!(
-            "Answer verified, base reward {} lamports (stake winner {}/{}, exceeded limit)",
-            actual_reward,
+            "Answer verified but vault insufficient (winner {}/{}, credit preserved)",
             pool.stake_winner_count,
-            pool.stake_reward_count
+            pool.stake_reward_count,
         );
     }
 

@@ -12,24 +12,24 @@ pub fn handler_adjust_free_stake(
     require!(delta != 0, QuestError::InvalidDelta);
 
     let stake_record = &mut ctx.accounts.stake_record;
-    let old_credits = stake_record.free_credits;
+    let old_credits = stake_record.boost_credits;
 
     if delta > 0 {
-        stake_record.free_credits = old_credits
+        stake_record.boost_credits = old_credits
             .checked_add(delta as u32)
-            .ok_or(error!(QuestError::FreeCreditsOverflow))?;
+            .ok_or(error!(QuestError::BoostCreditsOverflow))?;
     } else {
-        stake_record.free_credits = old_credits.saturating_sub(delta.unsigned_abs());
+        stake_record.boost_credits = old_credits.saturating_sub(delta.unsigned_abs());
     }
 
     stake_record.user_pubkey = ctx.accounts.user.key();
 
     msg!(
-        "Free stake adjusted: user={}, delta={}, credits={}->{}, reason={}",
+        "Boost credits adjusted: user={}, delta={}, credits={}->{}, reason={}",
         ctx.accounts.user.key(),
         delta,
         old_credits,
-        stake_record.free_credits,
+        stake_record.boost_credits,
         reason
     );
     Ok(())
