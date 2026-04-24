@@ -68,10 +68,11 @@ pub fn handler_submit_answer(
 
     let pool = &mut ctx.accounts.pool;
     let will_be_winner = pool.stake_winner_count.saturating_add(1);
-    let reward_lamports = if will_be_winner <= pool.stake_reward_count {
+    let within_limit = will_be_winner <= pool.stake_reward_count;
+    let reward_lamports = if within_limit {
         pool.stake_reward_per_winner
     } else {
-        // beyond-limit base reward (pre-split formula)
+        // beyond-limit base reward (pre-split formula); credit NOT consumed
         game_config.reward_per_share
     };
 
@@ -119,8 +120,8 @@ pub fn handler_submit_answer(
         )?;
     }
 
-    // Consume 1 credit on successful reward
-    if actual_reward > 0 {
+    // Consume 1 credit only when rewarded within slot limit; beyond-limit keeps credit
+    if actual_reward > 0 && within_limit {
         let stake_record = &mut ctx.accounts.stake_record;
         stake_record.boost_credits -= 1;
         msg!(
@@ -129,6 +130,13 @@ pub fn handler_submit_answer(
             pool.stake_winner_count,
             pool.stake_reward_count,
             stake_record.boost_credits,
+        );
+    } else if actual_reward > 0 {
+        msg!(
+            "Base reward {} lamports (beyond limit winner {}/{}, credit preserved)",
+            actual_reward,
+            pool.stake_winner_count,
+            pool.stake_reward_count,
         );
     } else {
         msg!(
