@@ -67,10 +67,10 @@ pub fn handler_submit_answer(
     );
 
     let pool = &mut ctx.accounts.pool;
-    let will_be_winner = pool.stake_winner_count.saturating_add(1);
-    let within_limit = will_be_winner <= pool.stake_reward_count;
+    let will_be_winner = pool.boost_winner_count.saturating_add(1);
+    let within_limit = will_be_winner <= pool.boost_reward_count;
     let reward_lamports = if within_limit {
-        pool.stake_reward_per_winner
+        pool.boost_reward_per_winner
     } else {
         // beyond-limit base reward (pre-split formula); credit NOT consumed
         game_config.reward_per_share
@@ -87,11 +87,11 @@ pub fn handler_submit_answer(
 
     // Increment winner count + accumulate avg_participant_stake
     let pool = &mut ctx.accounts.pool;
-    pool.stake_winner_count += 1;
-    if pool.stake_reward_count > 0 {
+    pool.boost_winner_count += 1;
+    if pool.boost_reward_count > 0 {
         pool.avg_participant_stake = pool
             .avg_participant_stake
-            .saturating_add(user_stake / pool.stake_reward_count as u64);
+            .saturating_add(user_stake / pool.boost_reward_count as u64);
     }
 
     // Transfer reward from vault PDA to user (skip if vault has insufficient balance)
@@ -127,22 +127,22 @@ pub fn handler_submit_answer(
         msg!(
             "Boost PoMI reward {} lamports (winner {}/{}, credits remaining: {})",
             actual_reward,
-            pool.stake_winner_count,
-            pool.stake_reward_count,
+            pool.boost_winner_count,
+            pool.boost_reward_count,
             stake_record.boost_credits,
         );
     } else if actual_reward > 0 {
         msg!(
             "Base reward {} lamports (beyond limit winner {}/{}, credit preserved)",
             actual_reward,
-            pool.stake_winner_count,
-            pool.stake_reward_count,
+            pool.boost_winner_count,
+            pool.boost_reward_count,
         );
     } else {
         msg!(
             "Answer verified but vault insufficient (winner {}/{}, credit preserved)",
-            pool.stake_winner_count,
-            pool.stake_reward_count,
+            pool.boost_winner_count,
+            pool.boost_reward_count,
         );
     }
 

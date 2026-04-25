@@ -38,14 +38,14 @@ pub fn handler_create_question(
         }
     }
 
-    // Calculate stake_reward_count: single-track boost PoMI
+    // Calculate boost_reward_count: single-track boost PoMI
     // target = prev winner_count (pre-split logic)
     let pool = &mut ctx.accounts.pool;
     let min_reward_count = game_config.min_reward_count;
     let max_reward_count = game_config.max_reward_count;
-    let prev_reward_count = pool.stake_reward_count;
+    let prev_reward_count = pool.boost_reward_count;
 
-    let target = pool.stake_winner_count;
+    let target = pool.boost_winner_count;
 
     let adjusted = if prev_reward_count == 0 {
         // First round: no previous baseline, use target directly
@@ -59,13 +59,13 @@ pub fn handler_create_question(
         target.clamp(lower, upper)
     };
 
-    let stake_reward_count = adjusted.clamp(min_reward_count, max_reward_count);
+    let boost_reward_count = adjusted.clamp(min_reward_count, max_reward_count);
 
-    // Calculate total_reward from config: reward_per_share * stake_reward_count + extra_reward
+    // Calculate total_reward from config: reward_per_share * boost_reward_count + extra_reward
     let reward_per_share = game_config.reward_per_share;
     let extra_reward = game_config.extra_reward;
     let total_reward = reward_per_share
-        .checked_mul(stake_reward_count as u64)
+        .checked_mul(boost_reward_count as u64)
         .unwrap()
         .checked_add(extra_reward)
         .unwrap();
@@ -104,10 +104,10 @@ pub fn handler_create_question(
     }
 
     // Single-track boost PoMI reward (pre-split formula)
-    // reward_per_winner = reward_per_share + extra_reward / stake_reward_count
+    // reward_per_winner = reward_per_share + extra_reward / boost_reward_count
     // Integer division remainder stays in vault for next round
-    let extra_per_winner = extra_reward / stake_reward_count as u64;
-    let stake_reward_per_winner = reward_per_share.saturating_add(extra_per_winner);
+    let extra_per_winner = extra_reward / boost_reward_count as u64;
+    let boost_reward_per_winner = reward_per_share.saturating_add(extra_per_winner);
 
     // stake_high/low kept for backward-compat of staking instruction; reflect last avg
     let prev_avg = pool.avg_participant_stake;
@@ -120,9 +120,9 @@ pub fn handler_create_question(
     pool.answer_hash = answer_hash;
     pool.deadline = deadline;
     pool.reward_amount = total_reward;
-    pool.stake_reward_count = stake_reward_count;
-    pool.stake_reward_per_winner = stake_reward_per_winner;
-    pool.stake_winner_count = 0;
+    pool.boost_reward_count = boost_reward_count;
+    pool.boost_reward_per_winner = boost_reward_per_winner;
+    pool.boost_winner_count = 0;
     // Deprecated free track fields: write zero
     pool.free_reward_count = 0;
     pool.free_reward_per_winner = 0;
@@ -136,8 +136,8 @@ pub fn handler_create_question(
     msg!(
         "Quest created (round {}, boost_slots={}, boost_reward={})",
         pool.round,
-        stake_reward_count,
-        stake_reward_per_winner,
+        boost_reward_count,
+        boost_reward_per_winner,
     );
     Ok(())
 }

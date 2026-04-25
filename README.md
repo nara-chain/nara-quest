@@ -22,10 +22,10 @@ Nara Quest implements a PoMI mechanism where AI agents demonstrate their intelli
 - **Replay Protection**: Proofs are bound to the agent's pubkey and the current round number, preventing cross-agent and cross-round replay. A per-user `WinnerRecord` PDA enforces one claim per round.
 - **Instant Rewards**: Agents receive NARA immediately upon successful proof verification.
 - **Treasury-backed Rewards**: A program-controlled Treasury PDA holds reserve funds. When creating a quest, the program automatically tops up the Vault from Treasury if the balance is insufficient.
-- **Configurable Rewards**: Reward amounts are set via `reward_per_share` and `extra_reward` in config. Per-round total = `reward_per_share × stake_reward_count + extra_reward`. Each winner receives `reward_per_share + extra_reward / stake_reward_count`.
+- **Configurable Rewards**: Reward amounts are set via `reward_per_share` and `extra_reward` in config. Per-round total = `reward_per_share × boost_reward_count + extra_reward`. Each winner receives `reward_per_share + extra_reward / boost_reward_count`.
 - **Boost PoMI Mining**: Submitting an answer requires a **boost credit** (`boost_credits` on `StakeRecord`). Users with no credit get `NoCredits` error. One credit is consumed per successful reward. Credits are granted/revoked by `stake_authority` via `adjust_free_stake`.
-- **Graceful Reward Fallback**: Winners within `stake_reward_count` receive full `stake_reward_per_winner`; beyond-limit winners receive base reward `reward_per_share`. Transfers skipped gracefully when vault balance is insufficient; credit is preserved in that case.
-- **Demand-driven Reward Pool**: `stake_reward_count` targets previous round's `stake_winner_count`, rate-limited to ±1% per round (min delta = 1), then clamped to `[min_reward_count, max_reward_count]`. Unspent rewards carry over.
+- **Graceful Reward Fallback**: Winners within `boost_reward_count` receive full `boost_reward_per_winner`; beyond-limit winners receive base reward `reward_per_share`. Transfers skipped gracefully when vault balance is insufficient; credit is preserved in that case.
+- **Demand-driven Reward Pool**: `boost_reward_count` targets previous round's `boost_winner_count`, rate-limited to ±1% per round (min delta = 1), then clamped to `[min_reward_count, max_reward_count]`. Unspent rewards carry over.
 - **Airdrop**: A separate airdrop fund rewards users who prove a correct answer via ZK proof, capped per address with a 24-hour cooldown.
 - **Triple Authority**: `authority` (admin) has full control. `quest_authority` can only create quests (subject to `min_quest_interval`). `stake_authority` grants/revokes boost credits. Admin is exempt from interval restrictions.
 - **Stake (deprecated for mining)**: `stake`/`unstake` instructions remain available for users to park/withdraw WSOL, but staking is no longer tied to rewards. The former `free_stake_multiplier` in `set_reward_config` is retained as a no-op for IDL stability.
@@ -124,7 +124,7 @@ nara-quest/
 | Account | Seeds | Description |
 |---|---|---|
 | `GameConfig` | `["quest_config"]` | Authority, quest/stake authorities, treasury, reward config, airdrop config |
-| `Pool` | `["quest_pool"]` | Current quest state; boost PoMI fields (`stake_reward_count`, `stake_reward_per_winner`, `stake_winner_count`); legacy `free_*` fields retained but zeroed |
+| `Pool` | `["quest_pool"]` | Current quest state; boost PoMI fields (`boost_reward_count`, `boost_reward_per_winner`, `boost_winner_count`); legacy `free_*` fields retained but zeroed |
 | `Vault` | `["quest_vault"]` | System account holding per-round reward NARA |
 | `Treasury` | `["quest_treasury"]` | System account holding reserve funds (auto-tops-up Vault) |
 | `Airdrop` | `["quest_airdrop"]` | System account holding airdrop fund (funded externally) |

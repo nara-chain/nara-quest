@@ -23,9 +23,9 @@ pub fn handler_initialize(ctx: Context<Initialize>) -> Result<()> {
 
     let pool = &mut ctx.accounts.pool;
     pool.round = 0;
-    pool.stake_winner_count = 0;
-    pool.stake_reward_count = 0;
-    pool.stake_reward_per_winner = 0;
+    pool.boost_winner_count = 0;
+    pool.boost_reward_count = 0;
+    pool.boost_reward_per_winner = 0;
     pool.created_at = 0;
     pool.stake_high = 0;
     pool.stake_low = 0;
